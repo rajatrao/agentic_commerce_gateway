@@ -73,3 +73,20 @@ export interface ProductAuditPage {
   total: number;
   items: ProductAudit[];
 }
+
+export type AgentProtocol = "ucp" | "acp" | "mcp";
+
+export interface AgentClient {
+  id: string;
+  name: string;
+  protocol: AgentProtocol;
+  key_prefix: string;
+  scopes: string[];
+  created_at: string;
+  revoked_at: string | null;
+}
+
+export interface AgentClientCreated extends AgentClient {
+  /** Shown once; backend-engine stores only a hash. */
+  api_key: string;
+}

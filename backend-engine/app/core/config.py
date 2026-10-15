@@ -48,6 +48,10 @@ class Settings(BaseSettings):
     llm_txt_cache_seconds: int = 600
     llm_txt_max_products: int = 2000
 
+    # Public https origin of this service, used in discovery documents (UCP profile). Falls back
+    # to the request's own base URL.
+    public_base_url: str = ""
+
     cors_origins: list[str] = Field(default_factory=list)
 
     @field_validator("database_url")

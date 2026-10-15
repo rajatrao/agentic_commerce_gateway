@@ -67,6 +67,11 @@ class FakeShopify:
     def __init__(self) -> None:
         self.variants = default_variants()
         self.calls: list[str] = []
+        self.drafts: dict[str, dict[str, Any]] = {}  # id -> DraftOrderInput
+        self.deleted: list[str] = []
+        self.completed: list[str] = []
+        self.fail_complete = False
+        self.price_skew = Decimal("0")  # added to draft totals to simulate a price change
 
     async def query(self, query: str, variables: dict[str, Any] | None = None) -> dict[str, Any]:
         return self.handle(query, variables or {})
@@ -78,6 +83,45 @@ class FakeShopify:
         if "CartCalculate" in query:
             self.calls.append("calculate")
             return {"draftOrderCalculate": self._calculate(variables["input"])}
+        if "AgentDraftCreate" in query:
+            self.calls.append("draft_create")
+            draft_id = f"gid://shopify/DraftOrder/{len(self.drafts) + 1}"
+            self.drafts[draft_id] = variables["input"]
+            calc = self._calculate(variables["input"])["calculatedDraftOrder"]
+            total = Decimal(calc["totalPriceSet"]["shopMoney"]["amount"]) + self.price_skew
+            return {
+                "draftOrderCreate": {
+                    "draftOrder": {"id": draft_id, "name": "#D1", "totalPriceSet": _money(total)},
+                    "userErrors": [],
+                }
+            }
+        if "AgentDraftComplete" in query:
+            self.calls.append("draft_complete")
+            if self.fail_complete:
+                return {
+                    "draftOrderComplete": {
+                        "draftOrder": None,
+                        "userErrors": [{"field": None, "message": "Inventory unavailable"}],
+                    }
+                }
+            self.completed.append(variables["id"])
+            number = 1000 + len(self.completed)
+            order = {
+                "id": f"gid://shopify/Order/{number}",
+                "name": f"#{number}",
+                "statusPageUrl": f"https://acme.example/orders/{number}/status",
+                "displayFinancialStatus": "PAID",
+                "displayFulfillmentStatus": "UNFULFILLED",
+            }
+            return {
+                "draftOrderComplete": {
+                    "draftOrder": {"id": variables["id"], "order": order},
+                    "userErrors": [],
+                }
+            }
+        if "AgentDraftDelete" in query:
+            self.deleted.append(variables["input"]["id"])
+            return {"draftOrderDelete": {"deletedId": variables["input"]["id"], "userErrors": []}}
         if "AgentSearch" in query:
             return {"products": {"nodes": [self._product(v) for v in self.variants.values()]}}
         if "AgentProduct" in query:
@@ -165,3 +209,25 @@ class FakeShopify:
                 ]
             },
         }
+
+
+class FakeGateway:
+    """Stripe stand-in. Tokens: spt_decline -> declined, spt_3ds -> needs auth, else succeeds."""
+
+    def __init__(self) -> None:
+        self.charges: list[dict[str, Any]] = []
+        self.refunds: list[str] = []
+
+    async def charge(self, **kwargs: Any) -> Any:
+        from app.services.payment_gateway import ChargeResult
+
+        self.charges.append(kwargs)
+        token = kwargs["token"]
+        if token == "spt_decline":
+            return ChargeResult(False, code="payment_declined", message="Your card was declined.")
+        if token == "spt_3ds":
+            return ChargeResult(False, "pi_3ds", "requires_3ds", "Needs authentication.")
+        return ChargeResult(True, payment_ref=f"pi_{len(self.charges)}")
+
+    async def refund(self, *, payment_ref: str, idempotency_key: str, account: str | None) -> None:
+        self.refunds.append(payment_ref)

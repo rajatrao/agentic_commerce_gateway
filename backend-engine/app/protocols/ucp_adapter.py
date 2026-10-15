@@ -9,8 +9,14 @@ from typing import Any, ClassVar
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.models import AgentCart, AgentProtocol, CartStatus
-from app.protocols.base import EMAIL_PATTERN, ProtocolAdapter, ProtocolError, to_minor
+from app.models import AgentCart, AgentProtocol, AgentTransaction, CartStatus
+from app.protocols.base import (
+    EMAIL_PATTERN,
+    PaymentPayload,
+    ProtocolAdapter,
+    ProtocolError,
+    to_minor,
+)
 from app.services.cart_manager import (
     AddressInput,
     BuyerInput,
@@ -26,6 +32,10 @@ FULFILLMENT_CAPABILITY = "dev.ucp.shopping.fulfillment"
 SHIPPING_METHOD_ID = "shipping"
 DESTINATION_ID = "dest_1"
 GROUP_ID = "group_1"
+# Payment handler this gateway declares in its profile: Stripe delegated tokens
+# (shared payment tokens, `spt_...`), processed on the merchant's Stripe account.
+STRIPE_HANDLER_ID = "stripe"
+STRIPE_HANDLER = "com.stripe.shared_payment_token"
 
 STATUS = {
     CartStatus.OPEN: "incomplete",
@@ -99,6 +109,40 @@ class UpdateCheckout(_Model):
     fulfillment: UcpFulfillment | None = None
 
 
+class UcpCredential(_Model):
+    type: str | None = None
+    token: str = Field(min_length=1, max_length=512)
+
+
+class UcpInstrument(_Model):
+    id: str | None = None
+    handler_id: str | None = None
+    type: str | None = None
+    selected: bool | None = None
+    credential: UcpCredential
+
+
+class UcpPayment(_Model):
+    instruments: list[UcpInstrument] = Field(min_length=1, max_length=10)
+
+
+class CompleteCheckout(_Model):
+    buyer: UcpBuyer | None = None
+    payment: UcpPayment
+
+
+def payment_handlers() -> dict[str, Any]:
+    return {
+        STRIPE_HANDLER: [
+            {
+                "id": STRIPE_HANDLER_ID,
+                "version": UCP_VERSION,
+                "config": {"payment_method_types": ["card"]},
+            }
+        ]
+    }
+
+
 def envelope(status: str | None = None) -> dict[str, Any]:
     ucp: dict[str, Any] = {
         "version": UCP_VERSION,
@@ -116,6 +160,31 @@ class UcpAdapter(ProtocolAdapter):
     protocol: ClassVar[AgentProtocol] = AgentProtocol.UCP
     create_model: ClassVar[type[BaseModel]] = CreateCheckout
     update_model: ClassVar[type[BaseModel]] = UpdateCheckout
+    complete_model: ClassVar[type[BaseModel]] = CompleteCheckout
+
+    def _payment(self, request: BaseModel) -> PaymentPayload:
+        assert isinstance(request, CompleteCheckout)
+        instruments = request.payment.instruments
+        chosen = next((i for i in instruments if i.selected), instruments[0])
+        if chosen.handler_id not in (None, STRIPE_HANDLER_ID, STRIPE_HANDLER):
+            raise ProtocolError(
+                400,
+                "invalid",
+                f"unsupported payment handler {chosen.handler_id!r}",
+                "$.payment.instruments",
+            )
+        b = request.buyer
+        buyer = (
+            BuyerInput(
+                email=b.email, first_name=b.first_name, last_name=b.last_name, phone=b.phone_number
+            )
+            if b
+            else None
+        )
+        return PaymentPayload(token=chosen.credential.token, provider="stripe", buyer=buyer)
+
+    def render_order(self, cart: AgentCart, txn: AgentTransaction) -> dict[str, Any]:
+        return {"id": txn.order_gid, "label": txn.order_name, "permalink_url": txn.order_status_url}
 
     def _changes(self, request: BaseModel) -> CartChanges:
         assert isinstance(request, CreateCheckout | UpdateCheckout)
@@ -136,10 +205,13 @@ class UcpAdapter(ProtocolAdapter):
             )
         address, rate = None, None
         shipping = next(
-            (m for m in (request.fulfillment.methods if request.fulfillment else [])
-             if m.type == "shipping"),
+            (
+                m
+                for m in (request.fulfillment.methods if request.fulfillment else [])
+                if m.type == "shipping"
+            ),
             None,
-        )  # fmt: skip
+        )
         if shipping:
             if shipping.destinations:
                 d = shipping.destinations[0]
@@ -204,6 +276,7 @@ class UcpAdapter(ProtocolAdapter):
             "totals": totals,
             "messages": [_message(m, lines) for m in cart.messages],
             "links": [],
+            "payment": {"handlers": [{"id": STRIPE_HANDLER_ID, "name": STRIPE_HANDLER}]},
         }
         if cart.expires_at:
             body["expires_at"] = cart.expires_at.isoformat()
@@ -304,4 +377,5 @@ def _path(path: str | None, lines: list[dict[str, Any]]) -> str | None:
         "buyer.email": "$.buyer.email",
         "shipping_address": "$.fulfillment.methods[0].destinations",
         "shipping_option": "$.fulfillment.methods[0].groups[0].selected_option_id",
+        "payment": "$.payment",
     }.get(path, "$." + path)

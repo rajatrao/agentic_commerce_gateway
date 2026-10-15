@@ -381,19 +381,7 @@ class CartManager:
     async def _calculate(
         self, cart: AgentCart, lines: list[dict[str, Any]], rate_handle: str | None
     ) -> dict[str, Any]:
-        draft: dict[str, Any] = {
-            "lineItems": [
-                {"variantId": li["variant_id"], "quantity": li["quantity"]} for li in lines
-            ]
-        }
-        buyer = cart.buyer or {}
-        if buyer.get("email"):
-            draft["email"] = buyer["email"]
-        if cart.shipping_address:
-            draft["shippingAddress"] = _mailing_address(cart.shipping_address)
-        if rate_handle:
-            draft["shippingLine"] = {"shippingRateHandle": rate_handle}
-
+        draft = draft_order_input(cart, lines, rate_handle)
         result = (await self.shopify.query(CALCULATE_MUTATION, {"input": draft}))[
             "draftOrderCalculate"
         ]
@@ -454,6 +442,27 @@ class CartManager:
         for li in lines:
             li.setdefault("tax", "0.00")
             li.setdefault("total", li["subtotal"])
+
+
+def draft_order_input(
+    cart: AgentCart, lines: list[dict[str, Any]], rate_handle: str | None
+) -> dict[str, Any]:
+    """`DraftOrderInput` for a cart: used to price it here and to create the order at checkout."""
+    draft: dict[str, Any] = {
+        "lineItems": [{"variantId": li["variant_id"], "quantity": li["quantity"]} for li in lines]
+    }
+    buyer = cart.buyer or {}
+    if buyer.get("email"):
+        draft["email"] = buyer["email"]
+    if cart.shipping_address:
+        draft["shippingAddress"] = _mailing_address(cart.shipping_address)
+    if rate_handle:
+        draft["shippingLine"] = {"shippingRateHandle": rate_handle}
+    return draft
+
+
+def sellable_lines(cart: AgentCart) -> list[dict[str, Any]]:
+    return [li for li in cart.lines if li["available"] and li["quantity"] > 0]
 
 
 def _merge_lines(lines: list[LineInput]) -> list[LineInput]:

@@ -3,11 +3,10 @@
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
-from app.api.agent import CheckoutHandler
+from app.api.agent import CheckoutHandler, Rendered
 from app.api.deps import SessionDep, SettingsDep, TokenProviderDep
 from app.models import AgentCart
 from app.protocols.acp_adapter import AcpAdapter
-from app.protocols.base import ProtocolError
 
 router = APIRouter(prefix="/acp", tags=["acp"])
 adapter = AcpAdapter()
@@ -84,7 +83,10 @@ async def cancel_session(
     return await h.mutate({}, op)
 
 
-@router.post("/checkout_sessions/{session_id}/complete", summary="Complete (Phase 4)")
+@router.post(
+    "/checkout_sessions/{session_id}/complete",
+    summary="Pay with a delegated payment token and create the order",
+)
 async def complete_session(
     session_id: str,
     request: Request,
@@ -93,5 +95,10 @@ async def complete_session(
     tokens: TokenProviderDep,
 ) -> JSONResponse:
     h = _handler(request, session, settings, tokens)
-    h.cart(session_id)
-    raise ProtocolError(501, "not_implemented", "payment completion is not available yet")
+    body = await h.body()
+
+    async def op() -> Rendered:
+        outcome = await h.checkout(session_id, adapter.parse_complete(body))
+        return Rendered(200, adapter.render_completion(outcome.cart, outcome.transaction))
+
+    return await h.mutate(body, op)

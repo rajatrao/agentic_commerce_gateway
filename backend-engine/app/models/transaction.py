@@ -100,7 +100,7 @@ class AgentTransaction(SQLModel, table=True):
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     merchant_id: uuid.UUID = Field(foreign_key="merchants.id", index=True, ondelete="CASCADE")
-    cart_id: uuid.UUID | None = Field(default=None, foreign_key="agent_carts.id")
+    cart_id: uuid.UUID | None = Field(default=None, foreign_key="agent_carts.id", index=True)
     agent_client_id: uuid.UUID | None = Field(default=None, foreign_key="agent_clients.id")
     protocol: AgentProtocol = Field(
         sa_column=Column(pg_enum(AgentProtocol, "agent_protocol"), nullable=False)
@@ -117,6 +117,8 @@ class AgentTransaction(SQLModel, table=True):
     currency: str = Field(default="USD", sa_column=Column(String(3), nullable=False))
     draft_order_gid: str | None = None
     order_gid: str | None = None
+    order_name: str | None = None
+    order_status_url: str | None = None
     error_code: str | None = None
     error_detail: str | None = None
     created_at: datetime = Field(default_factory=utcnow, sa_column=tz_column())

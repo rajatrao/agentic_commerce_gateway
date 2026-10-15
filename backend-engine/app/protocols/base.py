@@ -6,27 +6,34 @@ back into that protocol's response shape. Adapters never touch the database or S
 """
 
 from abc import ABC, abstractmethod
-from decimal import Decimal
+from dataclasses import dataclass
 from typing import Any, ClassVar
 
 from pydantic import BaseModel, ValidationError
 
-from app.models import AgentCart, AgentProtocol
-from app.services.cart_manager import CartChanges, CartError
+from app.models import AgentCart, AgentProtocol, AgentTransaction
+from app.services.cart_manager import BuyerInput, CartChanges, CartError
+from app.services.money import to_minor
 
-# ISO 4217 currencies without minor units. Everything else in Shopify uses two decimals.
-ZERO_DECIMAL = frozenset("BIF CLP DJF GNF ISK JPY KMF KRW PYG RWF UGX VND VUV XAF XOF XPF".split())
-
+__all__ = [
+    "EMAIL_PATTERN",
+    "PaymentPayload",
+    "ProtocolAdapter",
+    "ProtocolError",
+    "split_name",
+    "to_minor",
+]
 
 EMAIL_PATTERN = r"^[^@\s]+@[^@\s]+\.[^@\s]+$"
 
 
-def to_minor(amount: Decimal | str, currency: str) -> int:
-    """Protocol amounts are integers in the currency's minor unit (cents)."""
-    value = Decimal(str(amount))
-    if currency.upper() not in ZERO_DECIMAL:
-        value *= 100
-    return int(value.to_integral_value())
+@dataclass(frozen=True)
+class PaymentPayload:
+    """The delegated credential from a protocol's `complete` request."""
+
+    token: str
+    provider: str = "stripe"
+    buyer: BuyerInput | None = None
 
 
 class ProtocolError(Exception):
@@ -55,12 +62,16 @@ class ProtocolAdapter(ABC):
     protocol: ClassVar[AgentProtocol]
     create_model: ClassVar[type[BaseModel]]
     update_model: ClassVar[type[BaseModel]]
+    complete_model: ClassVar[type[BaseModel]]
 
     def parse_create(self, body: Any) -> CartChanges:
         return self._changes(self._validate(self.create_model, body))
 
     def parse_update(self, body: Any) -> CartChanges:
         return self._changes(self._validate(self.update_model, body))
+
+    def parse_complete(self, body: Any) -> PaymentPayload:
+        return self._payment(self._validate(self.complete_model, body))
 
     @staticmethod
     def _validate(model: type[BaseModel], body: Any) -> BaseModel:
@@ -73,7 +84,20 @@ class ProtocolAdapter(ABC):
     def _changes(self, request: BaseModel) -> CartChanges: ...
 
     @abstractmethod
+    def _payment(self, request: BaseModel) -> PaymentPayload: ...
+
+    @abstractmethod
     def render(self, cart: AgentCart) -> dict[str, Any]: ...
+
+    def render_completion(self, cart: AgentCart, txn: AgentTransaction | None) -> dict[str, Any]:
+        """The checkout after `complete`, with the order when payment succeeded."""
+        body = self.render(cart)
+        if txn is not None and txn.order_gid:
+            body["order"] = self.render_order(cart, txn)
+        return body
+
+    @abstractmethod
+    def render_order(self, cart: AgentCart, txn: AgentTransaction) -> dict[str, Any]: ...
 
     @abstractmethod
     def render_error(self, error: ProtocolError) -> dict[str, Any]: ...

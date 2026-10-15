@@ -4,6 +4,8 @@ import type {
   AgentClientCreated,
   AgentProtocol,
   AuditRun,
+  PaymentSettings,
+  TransactionPage,
   AuditSummary,
   InstallationCheck,
   MerchantSyncResult,
@@ -168,6 +170,24 @@ export const backend = {
       `/api/v1/merchant/agent-clients/${encodeURIComponent(id)}`,
       { method: "DELETE" },
     );
+  },
+
+  transactions(shop: string, limit = 50, offset = 0) {
+    return backendRequest<TransactionPage>(
+      shop,
+      `/api/v1/merchant/transactions?limit=${limit}&offset=${offset}`,
+    );
+  },
+
+  paymentSettings(shop: string) {
+    return backendRequest<PaymentSettings>(shop, "/api/v1/merchant/payments");
+  },
+
+  savePaymentSettings(shop: string, stripeAccountId: string | null) {
+    return backendRequest<PaymentSettings>(shop, "/api/v1/merchant/payments", {
+      method: "PUT",
+      body: { stripe_account_id: stripeAccountId },
+    });
   },
 
   runInstallationCheck(shop: string, storeUrl?: string) {

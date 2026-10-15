@@ -226,7 +226,7 @@ There are four trust boundaries, each with its own mechanism:
    - MCP uses the same key, or OAuth 2.1 later per the MCP auth spec.
    - **Delegated payment tokens**, such as Stripe Shared Payment Tokens (`spt_…`) in ACP and UCP payment-handler payloads, are used exactly once to create and confirm a PaymentIntent on the merchant's connected Stripe account. They are never logged or persisted, and only the resulting `payment_ref` is stored.
 
-**Paid order flow (Phase 4):** `draftOrderCreate` (tags `Origin: Agentic Commerce`, line items and shipping from the cart) → Stripe confirm → `draftOrderComplete(paymentPending: false)`. That produces a **Paid / Unfulfilled** order, and every step writes `transaction_events`. Any failure after payment capture triggers an automatic refund and marks the transaction `failed`.
+**Paid order flow (Phase 4):** lock cart + `pending` transaction → re-check stock and re-price → `draftOrderCreate` (tags `Origin: Agentic Commerce`, line items, buyer, address and shipping rate from the cart, `reserveInventoryUntil` +10 min; abort if its total differs from the quoted total) → Stripe PaymentIntent confirmed with the shared payment token for exactly that total → `draftOrderComplete`. That produces a **Paid / Unfulfilled** order, and every step writes `transaction_events`. A failure after capture refunds automatically and marks the transaction `refunded`; a failed refund leaves it `captured` with `error_code=refund_failed` for manual follow-up.
 
 ## 4. Dependencies
 

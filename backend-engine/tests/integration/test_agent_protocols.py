@@ -5,14 +5,11 @@ import uuid
 from collections.abc import Iterator
 from typing import Any
 
-import httpx
 import pytest
-import respx
 from fastapi.testclient import TestClient
 
-from tests.conftest import FRONTEND_URL
 from tests.fakes import FakeShopify
-from tests.integration.test_catalog import GRAPHQL_PATH, auth, install
+from tests.integration.test_catalog import auth, install
 
 ADDRESS_ACP = {
     "name": "Ada Lovelace",
@@ -34,23 +31,6 @@ def client(app_env: None) -> Iterator[TestClient]:
 
     with TestClient(create_app()) as c:
         yield c
-
-
-@pytest.fixture
-def shopify() -> Iterator[FakeShopify]:
-    fake = FakeShopify()
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        body = json.loads(request.content)
-        return httpx.Response(200, json={"data": fake.handle(body["query"], body["variables"])})
-
-    with respx.mock(assert_all_called=False) as router:
-        router.post(f"{FRONTEND_URL}/internal/admin-token").respond(
-            json={"access_token": "shpat_fresh", "expires_at": None}
-        )
-        router.post(url__regex=rf"https://[^/]+{GRAPHQL_PATH}").mock(side_effect=handler)
-        router.route(host="testserver").pass_through()
-        yield fake
 
 
 def new_shop() -> str:
@@ -150,13 +130,6 @@ def test_acp_checkout_session_lifecycle(client: TestClient, shopify: FakeShopify
 
     got = client.get(f"/api/v1/acp/checkout_sessions/{sid}", headers=agent_headers(key)).json()
     assert got["fulfillment_option_id"] == "shopify-Express-15.00"
-
-    resp = client.post(
-        f"/api/v1/acp/checkout_sessions/{sid}/complete",
-        json={"payment_data": {"token": "spt_x", "provider": "stripe"}},
-        headers=agent_headers(key, "complete-1"),
-    )
-    assert resp.status_code == 501 and resp.json()["code"] == "not_implemented"
 
     resp = client.post(
         f"/api/v1/acp/checkout_sessions/{sid}/cancel", headers=agent_headers(key, "cancel-1")
@@ -340,6 +313,7 @@ def test_mcp_tools(client: TestClient, shopify: FakeShopify) -> None:
         "update_cart",
         "get_cart",
         "cancel_cart",
+        "checkout",
     }
 
     found = tool(client, key, "search_products", query="jacket")

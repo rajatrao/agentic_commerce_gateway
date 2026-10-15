@@ -90,3 +90,36 @@ export interface AgentClientCreated extends AgentClient {
   /** Shown once; backend-engine stores only a hash. */
   api_key: string;
 }
+
+export interface AgentTransaction {
+  id: string;
+  protocol: AgentProtocol;
+  agent_name: string | null;
+  status:
+    | "pending"
+    | "authorized"
+    | "captured"
+    | "order_created"
+    | "failed"
+    | "refunded";
+  amount: string;
+  currency: string;
+  payment_ref: string | null;
+  order_gid: string | null;
+  order_name: string | null;
+  admin_url: string | null;
+  error_code: string | null;
+  error_detail: string | null;
+  created_at: string;
+}
+
+export interface TransactionPage {
+  total: number;
+  items: AgentTransaction[];
+}
+
+export interface PaymentSettings {
+  stripe_account_id: string | null;
+  stripe_configured: boolean;
+  test_mode: boolean;
+}

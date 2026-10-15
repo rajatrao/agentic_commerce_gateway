@@ -66,7 +66,8 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(ProtocolError)
     async def protocol_error(request: Request, exc: ProtocolError) -> JSONResponse:
-        adapter = ACP if request.url.path.startswith("/api/v1/acp/") else UCP
+        ucp_paths = ("/api/v1/ucp/", "/.well-known/ucp")
+        adapter = UCP if request.url.path.startswith(ucp_paths) else ACP
         return protocol_error_response(adapter, request, exc)
 
     @app.get("/health", tags=["ops"])

@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime
+from decimal import Decimal
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -30,3 +31,33 @@ class AgentClientOut(BaseModel):
 class AgentClientCreated(AgentClientOut):
     api_key: str
     """Shown once. Only an argon2 hash is stored."""
+
+
+class TransactionOut(BaseModel):
+    id: uuid.UUID
+    protocol: str
+    agent_name: str | None
+    status: str
+    amount: Decimal
+    currency: str
+    payment_ref: str | None
+    order_gid: str | None
+    order_name: str | None
+    admin_url: str | None
+    error_code: str | None
+    error_detail: str | None
+    created_at: datetime
+
+
+class TransactionPage(BaseModel):
+    total: int
+    items: list[TransactionOut]
+
+
+class PaymentSettings(BaseModel):
+    stripe_account_id: str | None = Field(default=None, pattern=r"^acct_[A-Za-z0-9]+$")
+
+
+class PaymentSettingsOut(PaymentSettings):
+    stripe_configured: bool
+    test_mode: bool

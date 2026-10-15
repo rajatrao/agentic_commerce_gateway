@@ -17,7 +17,7 @@ Both services share one Postgres database. Prisma owns the `shopify_app` schema 
 | 1 | Monorepo, Docker, Railway config, Postgres schemas, service-JWT auth, installation checker | Done |
 | 2 | Catalog auditor + AI Discovery Score, streaming `llm.txt`, dashboard | Done |
 | 3 | UCP / ACP / MCP adapters, cart and inventory services | Done |
-| 4 | Delegated-token agent checkout, paid draft orders | Next |
+| 4 | Delegated-token agent checkout, paid draft orders | Done |
 
 ## Local development
 
@@ -64,6 +64,7 @@ One Railway project, three services. Each app service has a `railway.json` (conf
    - `FRONTEND_INTERNAL_URL=http://${{frontend-ui.RAILWAY_PRIVATE_DOMAIN}}:${{frontend-ui.PORT}}`
    - `SHOPIFY_API_KEY`, `SHOPIFY_API_SECRET`
    - `PUBLIC_BASE_URL=https://<backend public domain>` (used in the UCP discovery profile)
+   - `STRIPE_SECRET_KEY` (charges agent payment tokens; merchants can route charges to their own connected account from the Agent orders page)
    - Generate a public domain: agents and Shopify must reach `llm.txt`, protocol and webhook routes.
 3. **frontend-ui**: New service from this repo, root directory `/frontend-ui`. Variables:
    - `DATABASE_URL=${{Postgres.DATABASE_URL}}?schema=shopify_app`
@@ -94,9 +95,21 @@ Merchants create an API key per agent on the **Agent access** page (one protocol
 | UCP | `POST /api/v1/ucp/checkout-sessions`, `GET`/`PUT …/{id}`, `POST …/{id}/cancel`; discovery at `/.well-known/ucp` | [UCP checkout REST binding](https://ucp.dev/specification/shopping/checkout/rest/) with the fulfillment extension |
 | MCP | `POST /mcp` (streamable HTTP, stateless JSON) | Tools: `search_products`, `get_product`, `create_cart`, `update_cart`, `get_cart`, `cancel_cart` |
 
-ACP and UCP writes require an `Idempotency-Key` header: a retry with the same key and body replays the stored response, and the same key with a different body gets `409`. `…/complete` returns `501` until Phase 4.
+ACP and UCP writes require an `Idempotency-Key` header: a retry with the same key and body replays the stored response, and the same key with a different body gets `409`.
 
 All three share [`cart_manager.py`](backend-engine/app/services/cart_manager.py): each change re-checks live stock (archived products, unsellable variants and tracked "deny" inventory; over-requests are clamped with a warning), then prices the cart through Shopify's `draftOrderCalculate`, so shipping rates and taxes come from the merchant's own settings. The cheapest rate is preselected. A cart is `ready` once it has sellable lines, a buyer email and, if anything ships, an address and rate. Carts expire after 6 hours without changes.
+
+## Agent payments and orders
+
+Agents pay with a Stripe **shared payment token** (`spt_…`), sent as ACP `payment_data`, a UCP `payment.instruments[].credential`, the MCP `checkout` tool, or the protocol-neutral `POST /api/v1/agent-checkout` (`{"checkout_id", "payment_data" | "payment"}`; `201` with the order, `402` when declined). [`payment_processor.py`](backend-engine/app/services/payment_processor.py) then:
+
+1. locks the cart and opens a `pending` transaction (one checkout at a time per cart, one successful payment ever);
+2. re-checks stock and re-prices through Shopify; a cart that is no longer ready is not charged;
+3. creates a draft order tagged `Origin: Agentic Commerce` that holds stock for 10 minutes, and refuses to charge if its total differs from the price the agent saw;
+4. charges exactly that total on Stripe (`payment_method_data[shared_payment_granted_token]`, preview API version `STRIPE_API_VERSION`, idempotent per transaction);
+5. completes the draft as a **Paid / Unfulfilled** order. If Shopify refuses after the charge, the payment is refunded automatically.
+
+Each step is appended to `transaction_events`; tokens are never stored or logged, only the PaymentIntent id. With a `sk_test_` key, Stripe test PaymentMethods such as `pm_card_visa` are also accepted, so the flow can be tried before shared payment tokens are enabled on the Stripe account. Merchants see every attempt on the **Agent orders** page.
 
 ## Service-to-service auth
 
@@ -114,7 +127,8 @@ backend-engine/
   app/api/          FastAPI routers and auth dependencies
   app/protocols/    UCP / ACP adapters and the MCP server (wire format <-> cart_manager)
   app/services/     business logic: installation_checker, catalog_auditor, tag_mapper,
-                    llm_txt_renderer, shopify_client, cart_manager, agent_keys
+                    llm_txt_renderer, shopify_client, cart_manager, agent_keys,
+                    payment_processor, payment_gateway (Stripe)
   app/jobs/         background jobs (catalog audit)
   app/repositories/ database access
   app/models/       SQLModel tables (gateway schema)

@@ -10,8 +10,15 @@ from typing import Any, ClassVar
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.models import AgentCart, AgentProtocol, CartStatus
-from app.protocols.base import EMAIL_PATTERN, ProtocolAdapter, ProtocolError, split_name, to_minor
+from app.models import AgentCart, AgentProtocol, AgentTransaction, CartStatus
+from app.protocols.base import (
+    EMAIL_PATTERN,
+    PaymentPayload,
+    ProtocolAdapter,
+    ProtocolError,
+    split_name,
+    to_minor,
+)
 from app.services.cart_manager import (
     AddressInput,
     BuyerInput,
@@ -32,7 +39,11 @@ STATUS = {
 }
 
 # ACP error codes are a closed set; map the cart's richer codes onto it.
-MESSAGE_CODES = {"item_unavailable": "out_of_stock", "out_of_stock": "out_of_stock"}
+MESSAGE_CODES = {
+    "item_unavailable": "out_of_stock",
+    "payment_error": "payment_declined",
+}
+ACP_CODES = {"missing", "invalid", "out_of_stock", "payment_declined", "requires_3ds"}
 
 
 class _Model(BaseModel):
@@ -76,24 +87,52 @@ class UpdateCheckoutSession(_Model):
     fulfillment_option_id: str | None = None
 
 
+class AcpPaymentData(_Model):
+    token: str = Field(min_length=1, max_length=512)
+    provider: str = Field(min_length=1, max_length=32)
+    billing_address: AcpAddress | None = None
+
+
+class CompleteCheckoutSession(_Model):
+    buyer: AcpBuyer | None = None
+    payment_data: AcpPaymentData
+
+
 class AcpAdapter(ProtocolAdapter):
     protocol: ClassVar[AgentProtocol] = AgentProtocol.ACP
     create_model: ClassVar[type[BaseModel]] = CreateCheckoutSession
     update_model: ClassVar[type[BaseModel]] = UpdateCheckoutSession
+    complete_model: ClassVar[type[BaseModel]] = CompleteCheckoutSession
+
+    def _payment(self, request: BaseModel) -> PaymentPayload:
+        assert isinstance(request, CompleteCheckoutSession)
+        return PaymentPayload(
+            token=request.payment_data.token,
+            provider=request.payment_data.provider.lower(),
+            buyer=self._buyer(request.buyer),
+        )
+
+    def render_order(self, cart: AgentCart, txn: AgentTransaction) -> dict[str, Any]:
+        return {
+            "id": txn.order_gid,
+            "checkout_session_id": str(cart.id),
+            "permalink_url": txn.order_status_url,
+        }
+
+    @staticmethod
+    def _buyer(buyer: AcpBuyer | None) -> BuyerInput | None:
+        if buyer is None:
+            return None
+        first, last = buyer.first_name, buyer.last_name
+        if not first and not last:
+            first, last = split_name(buyer.name)
+        return BuyerInput(
+            email=buyer.email, first_name=first, last_name=last, phone=buyer.phone_number
+        )
 
     def _changes(self, request: BaseModel) -> CartChanges:
         assert isinstance(request, CreateCheckoutSession | UpdateCheckoutSession)
-        buyer = None
-        if request.buyer:
-            first, last = request.buyer.first_name, request.buyer.last_name
-            if not first and not last:
-                first, last = split_name(request.buyer.name)
-            buyer = BuyerInput(
-                email=request.buyer.email,
-                first_name=first,
-                last_name=last,
-                phone=request.buyer.phone_number,
-            )
+        buyer = self._buyer(request.buyer)
         address = None
         if a := request.fulfillment_address:
             first, last = split_name(a.name)
@@ -226,7 +265,7 @@ class AcpAdapter(ProtocolAdapter):
             "content_type": "plain",
             "content": message["content"],
         }
-        if out["code"] not in ("missing", "invalid", "out_of_stock"):
+        if out["code"] not in ACP_CODES:
             out["code"] = "invalid"
         if param:
             out["param"] = param
@@ -256,4 +295,5 @@ def _param(path: str | None, lines: list[dict[str, Any]]) -> str | None:
         "buyer.email": "$.buyer.email",
         "shipping_address": "$.fulfillment_address",
         "shipping_option": "$.fulfillment_option_id",
+        "payment": "$.payment_data",
     }.get(path, "$." + path)

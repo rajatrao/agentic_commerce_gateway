@@ -154,8 +154,8 @@ export default function Agents() {
         <s-paragraph>
           Agents send the key as a Bearer token. UCP and ACP calls also need an
           Idempotency-Key header. Carts are priced with your own shipping rates
-          and taxes, and stock is checked live. Payment and order creation are
-          not enabled yet.
+          and taxes, and stock is checked live. Agents pay with Stripe shared
+          payment tokens; paid orders are listed under Agent orders.
         </s-paragraph>
         {baseUrl && (
           <s-unordered-list>

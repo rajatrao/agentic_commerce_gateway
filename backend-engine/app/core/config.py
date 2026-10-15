@@ -48,6 +48,14 @@ class Settings(BaseSettings):
     llm_txt_cache_seconds: int = 600
     llm_txt_max_products: int = 2000
 
+    # Stripe: the platform secret key. Charges go to a merchant's connected account when one is
+    # set on the merchant (settings.stripe_account_id), otherwise to this account.
+    stripe_secret_key: str = ""
+    # Shared payment tokens (spt_...) need Stripe's agentic-commerce preview API version.
+    stripe_api_version: str = "2026-09-30.preview"
+    # Hold stock on the draft order while the payment runs.
+    checkout_reservation_minutes: int = 10
+
     # Public https origin of this service, used in discovery documents (UCP profile). Falls back
     # to the request's own base URL.
     public_base_url: str = ""

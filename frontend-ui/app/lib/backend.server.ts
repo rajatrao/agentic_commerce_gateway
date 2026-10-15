@@ -1,5 +1,8 @@
 import { mintServiceToken, type ServiceScope } from "./jwt.server";
 import type {
+  AgentClient,
+  AgentClientCreated,
+  AgentProtocol,
   AuditRun,
   AuditSummary,
   InstallationCheck,
@@ -76,6 +79,7 @@ export async function backendRequest<T>(
     }
     throw new BackendError(response.status, detail);
   }
+  if (response.status === 204) return undefined as T;
   return (await response.json()) as T;
 }
 
@@ -141,6 +145,29 @@ export const backend = {
       if (error instanceof BackendError && error.status === 404) return null;
       throw error;
     }
+  },
+
+  agentClients(shop: string) {
+    return backendRequest<AgentClient[]>(
+      shop,
+      "/api/v1/merchant/agent-clients",
+    );
+  },
+
+  createAgentClient(shop: string, name: string, protocol: AgentProtocol) {
+    return backendRequest<AgentClientCreated>(
+      shop,
+      "/api/v1/merchant/agent-clients",
+      { method: "POST", body: { name, protocol } },
+    );
+  },
+
+  revokeAgentClient(shop: string, id: string) {
+    return backendRequest<void>(
+      shop,
+      `/api/v1/merchant/agent-clients/${encodeURIComponent(id)}`,
+      { method: "DELETE" },
+    );
   },
 
   runInstallationCheck(shop: string, storeUrl?: string) {

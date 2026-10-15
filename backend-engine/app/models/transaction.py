@@ -41,8 +41,24 @@ class AgentCart(SQLModel, table=True):
     protocol: AgentProtocol = Field(
         sa_column=Column(pg_enum(AgentProtocol, "agent_protocol"), nullable=False)
     )
+    agent_client_id: uuid.UUID | None = Field(
+        default=None, foreign_key="agent_clients.id", index=True, ondelete="SET NULL"
+    )
     external_session_id: str | None = Field(default=None, index=True)
     lines: list[dict[str, Any]] = Field(
+        default_factory=list, sa_column=Column(JSONB, nullable=False, server_default="[]")
+    )
+    buyer: dict[str, Any] | None = Field(default=None, sa_column=Column(JSONB, nullable=True))
+    shipping_address: dict[str, Any] | None = Field(
+        default=None, sa_column=Column(JSONB, nullable=True)
+    )
+    # Rates Shopify offered for the current address, and the one the agent (or we) picked.
+    shipping_options: list[dict[str, Any]] = Field(
+        default_factory=list, sa_column=Column(JSONB, nullable=False, server_default="[]")
+    )
+    shipping_rate_handle: str | None = None
+    # Problems an agent must resolve before checkout (out of stock, missing address, ...).
+    messages: list[dict[str, Any]] = Field(
         default_factory=list, sa_column=Column(JSONB, nullable=False, server_default="[]")
     )
     subtotal: Decimal = _money()
@@ -55,7 +71,27 @@ class AgentCart(SQLModel, table=True):
         sa_column=Column(pg_enum(CartStatus, "cart_status"), nullable=False),
     )
     expires_at: datetime | None = Field(default=None, sa_column=tz_column(nullable=True))
+    created_at: datetime = Field(default_factory=utcnow, sa_column=tz_column())
     updated_at: datetime = Field(default_factory=utcnow, sa_column=tz_column())
+
+
+class IdempotencyRecord(SQLModel, table=True):
+    """Stored response for an agent request carrying an `Idempotency-Key` header.
+
+    `status_code` is NULL while the first request is still being processed, so a concurrent
+    retry gets a 409 instead of running the operation twice.
+    """
+
+    __tablename__ = "idempotency_records"
+    __table_args__ = (UniqueConstraint("agent_client_id", "key"),)
+
+    id: int | None = Field(default=None, sa_column=Column(BigInteger, Identity(), primary_key=True))
+    agent_client_id: uuid.UUID = Field(foreign_key="agent_clients.id", ondelete="CASCADE")
+    key: str = Field(sa_column=Column(String(255), nullable=False))
+    request_hash: str
+    status_code: int | None = None
+    response_body: dict[str, Any] | None = Field(default=None, sa_column=Column(JSONB))
+    created_at: datetime = Field(default_factory=utcnow, sa_column=tz_column(index=True))
 
 
 class AgentTransaction(SQLModel, table=True):

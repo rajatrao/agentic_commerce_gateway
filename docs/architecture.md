@@ -174,7 +174,10 @@ The offline Admin token gets to the backend through the Remix `afterAuth` hook, 
 | id uuid PK | merchant_id FK | protocol enum(`ucp`,`acp`,`mcp`) | name | key_prefix text | key_hash text (argon2) | scopes text[] | created_at | revoked_at |
 
 **agent_carts**
-| id uuid PK | merchant_id FK | protocol | external_session_id text | lines jsonb | subtotal/shipping/tax/total numeric(12,2) | currency char(3) | status enum(`open`,`ready`,`completed`,`expired`,`canceled`) | expires_at | updated_at |
+| id uuid PK | merchant_id FK | protocol | agent_client_id FK | external_session_id text | lines jsonb | buyer jsonb | shipping_address jsonb | shipping_options jsonb | shipping_rate_handle text | messages jsonb | subtotal/shipping/tax/total numeric(12,2) | currency char(3) | status enum(`open`,`ready`,`completed`,`expired`,`canceled`) | expires_at | created_at | updated_at |
+
+**idempotency_records**: stored responses for agent `Idempotency-Key` replays (24 h)
+| id bigint PK | agent_client_id FK | key text | request_hash text | status_code int (NULL while in flight) | response_body jsonb | created_at | UNIQUE `(agent_client_id, key)` |
 
 **agent_transactions**: Agentic transaction logs
 | column | type | notes |

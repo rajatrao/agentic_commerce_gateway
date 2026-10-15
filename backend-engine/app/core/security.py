@@ -3,6 +3,8 @@
 import base64
 import hashlib
 import hmac
+import time
+import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
@@ -49,6 +51,26 @@ def verify_service_jwt(token: str, settings: Settings) -> ServiceClaims:
         scopes=frozenset(scope),
         jti=payload["jti"],
         expires_at=datetime.fromtimestamp(payload["exp"], tz=UTC),
+    )
+
+
+def mint_backend_service_jwt(shop: str, scope: list[str], settings: Settings) -> str:
+    """Mint a 60s EdDSA token that frontend-ui accepts on its /internal routes."""
+    if not settings.backend_jwt_private_key:
+        raise AuthError("BACKEND_JWT_PRIVATE_KEY not configured")
+    now = int(time.time())
+    return jwt.encode(
+        {
+            "iss": "backend-engine",
+            "aud": "frontend-ui",
+            "sub": shop,
+            "scope": scope,
+            "iat": now,
+            "exp": now + 60,
+            "jti": str(uuid.uuid4()),
+        },
+        settings.backend_jwt_private_key,
+        algorithm="EdDSA",
     )
 
 

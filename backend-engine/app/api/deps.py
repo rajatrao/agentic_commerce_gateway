@@ -12,6 +12,7 @@ from app.core.db import get_session
 from app.core.security import AuthError, ReplayCache, ServiceClaims, verify_service_jwt
 from app.models import Merchant
 from app.repositories.merchants import MerchantRepository
+from app.services.shopify_client import ShopifyTokenProvider
 
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 SessionDep = Annotated[Session, Depends(get_session)]
@@ -68,4 +69,9 @@ async def get_http_client(request: Request) -> AsyncIterator[httpx.AsyncClient]:
     yield request.app.state.http_client
 
 
+def get_token_provider(request: Request) -> ShopifyTokenProvider:
+    return request.app.state.shopify_tokens  # type: ignore[no-any-return]
+
+
 HttpClientDep = Annotated[httpx.AsyncClient, Depends(get_http_client)]
+TokenProviderDep = Annotated[ShopifyTokenProvider, Depends(get_token_provider)]

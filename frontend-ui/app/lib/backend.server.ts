@@ -1,5 +1,11 @@
 import { mintServiceToken, type ServiceScope } from "./jwt.server";
-import type { InstallationCheck, MerchantSyncResult } from "./types";
+import type {
+  AuditRun,
+  AuditSummary,
+  InstallationCheck,
+  MerchantSyncResult,
+  ProductAuditPage,
+} from "./types";
 
 /**
  * Typed client for backend-engine. Runs only on the server: the browser never talks to
@@ -36,7 +42,12 @@ interface RequestOptions {
 export async function backendRequest<T>(
   shop: string,
   path: string,
-  { method = "GET", body, scope, timeoutMs = DEFAULT_TIMEOUT_MS }: RequestOptions = {},
+  {
+    method = "GET",
+    body,
+    scope,
+    timeoutMs = DEFAULT_TIMEOUT_MS,
+  }: RequestOptions = {},
 ): Promise<T> {
   const token = await mintServiceToken(shop, scope);
   const response = await fetch(`${baseUrl()}${path}`, {
@@ -55,7 +66,10 @@ export async function backendRequest<T>(
     try {
       const json = (await response.json()) as { detail?: unknown };
       if (json.detail) {
-        detail = typeof json.detail === "string" ? json.detail : JSON.stringify(json.detail);
+        detail =
+          typeof json.detail === "string"
+            ? json.detail
+            : JSON.stringify(json.detail);
       }
     } catch {
       // non-JSON error body
@@ -68,14 +82,20 @@ export async function backendRequest<T>(
 export const backend = {
   /** Called from the Shopify `afterAuth` hook: registers the shop and hands over its token. */
   syncMerchant(shop: string, accessToken: string, scopes: string | undefined) {
-    return backendRequest<MerchantSyncResult>(shop, "/internal/merchants/sync", {
-      method: "POST",
-      body: { shop, access_token: accessToken, scopes: scopes ?? "" },
-      scope: ["internal:sync"],
-    });
+    return backendRequest<MerchantSyncResult>(
+      shop,
+      "/internal/merchants/sync",
+      {
+        method: "POST",
+        body: { shop, access_token: accessToken, scopes: scopes ?? "" },
+        scope: ["internal:sync"],
+      },
+    );
   },
 
-  async latestInstallationCheck(shop: string): Promise<InstallationCheck | null> {
+  async latestInstallationCheck(
+    shop: string,
+  ): Promise<InstallationCheck | null> {
     try {
       return await backendRequest<InstallationCheck>(
         shop,
@@ -87,11 +107,51 @@ export const backend = {
     }
   },
 
-  runInstallationCheck(shop: string, storeUrl?: string) {
-    return backendRequest<InstallationCheck>(shop, "/api/v1/merchant/installation-checks", {
+  startAudit(shop: string) {
+    return backendRequest<AuditRun>(shop, "/api/v1/merchant/audits", {
       method: "POST",
-      body: storeUrl ? { store_url: storeUrl } : {},
-      timeoutMs: 60_000,
     });
+  },
+
+  auditSummary(shop: string) {
+    return backendRequest<AuditSummary>(shop, "/api/v1/merchant/audits/latest");
+  },
+
+  async auditProducts(
+    shop: string,
+    params: {
+      maxScore?: number;
+      issue?: string;
+      limit?: number;
+      offset?: number;
+    } = {},
+  ): Promise<ProductAuditPage | null> {
+    const query = new URLSearchParams();
+    if (params.maxScore !== undefined)
+      query.set("max_score", String(params.maxScore));
+    if (params.issue) query.set("issue", params.issue);
+    query.set("limit", String(params.limit ?? 50));
+    query.set("offset", String(params.offset ?? 0));
+    try {
+      return await backendRequest<ProductAuditPage>(
+        shop,
+        `/api/v1/merchant/audits/latest/products?${query}`,
+      );
+    } catch (error) {
+      if (error instanceof BackendError && error.status === 404) return null;
+      throw error;
+    }
+  },
+
+  runInstallationCheck(shop: string, storeUrl?: string) {
+    return backendRequest<InstallationCheck>(
+      shop,
+      "/api/v1/merchant/installation-checks",
+      {
+        method: "POST",
+        body: storeUrl ? { store_url: storeUrl } : {},
+        timeoutMs: 60_000,
+      },
+    );
   },
 };

@@ -12,6 +12,8 @@ from app.api.v1.router import api_router, internal_router
 from app.core.config import get_settings
 from app.core.db import get_engine
 from app.core.logging import configure_logging
+from app.services.llm_txt_cache import LlmTxtCache
+from app.services.shopify_client import ShopifyTokenProvider
 
 
 @asynccontextmanager
@@ -22,6 +24,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         headers={"User-Agent": settings.http_user_agent},
         limits=httpx.Limits(max_connections=50),
     )
+    app.state.shopify_tokens = ShopifyTokenProvider(app.state.http_client, settings)
+    app.state.llm_txt_cache = LlmTxtCache(settings.llm_txt_cache_seconds)
     try:
         yield
     finally:

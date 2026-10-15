@@ -13,6 +13,8 @@ from cryptography.fernet import Fernet
 from tests.keys import make_keypair
 
 PRIVATE_PEM, PUBLIC_PEM = make_keypair()
+BACKEND_PRIVATE_PEM, BACKEND_PUBLIC_PEM = make_keypair()
+FRONTEND_URL = "http://frontend.test:3000"
 WEBHOOK_SECRET = "test-shopify-secret"
 
 
@@ -36,6 +38,8 @@ def app_env(database_url: str) -> Iterator[None]:
         JWT_PUBLIC_KEY=PUBLIC_PEM,
         TOKEN_ENCRYPTION_KEY=Fernet.generate_key().decode(),
         SHOPIFY_API_SECRET=WEBHOOK_SECRET,
+        BACKEND_JWT_PRIVATE_KEY=BACKEND_PRIVATE_PEM,
+        FRONTEND_INTERNAL_URL=FRONTEND_URL,
     )
     from app.core.config import get_settings
     from app.core.db import get_engine

@@ -2,7 +2,12 @@ import { generateKeyPairSync } from "node:crypto";
 import { decodeProtectedHeader, importSPKI, jwtVerify } from "jose";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { JWT_AUDIENCE, JWT_ISSUER, mintServiceToken, resetKeyCache } from "../jwt.server";
+import {
+  JWT_AUDIENCE,
+  JWT_ISSUER,
+  mintServiceToken,
+  resetKeyCache,
+} from "../jwt.server";
 
 const { privateKey, publicKey } = generateKeyPairSync("ed25519", {
   privateKeyEncoding: { type: "pkcs8", format: "pem" },
@@ -19,10 +24,14 @@ describe("mintServiceToken", () => {
     const token = await mintServiceToken("acme.myshopify.com");
     expect(decodeProtectedHeader(token).alg).toBe("EdDSA");
 
-    const { payload } = await jwtVerify(token, await importSPKI(publicKey, "EdDSA"), {
-      issuer: JWT_ISSUER,
-      audience: JWT_AUDIENCE,
-    });
+    const { payload } = await jwtVerify(
+      token,
+      await importSPKI(publicKey, "EdDSA"),
+      {
+        issuer: JWT_ISSUER,
+        audience: JWT_AUDIENCE,
+      },
+    );
     expect(payload.sub).toBe("acme.myshopify.com");
     expect(payload.scope).toEqual(["merchant:read", "merchant:write"]);
     expect(payload.exp! - payload.iat!).toBe(60);
@@ -38,6 +47,8 @@ describe("mintServiceToken", () => {
   it("fails loudly when the key is missing", async () => {
     delete process.env.JWT_PRIVATE_KEY;
     resetKeyCache();
-    await expect(mintServiceToken("a.myshopify.com")).rejects.toThrow(/JWT_PRIVATE_KEY/);
+    await expect(mintServiceToken("a.myshopify.com")).rejects.toThrow(
+      /JWT_PRIVATE_KEY/,
+    );
   });
 });

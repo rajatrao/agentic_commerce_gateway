@@ -15,8 +15,8 @@ Both services share one Postgres database. Prisma owns the `shopify_app` schema 
 | Phase | Scope | State |
 |---|---|---|
 | 1 | Monorepo, Docker, Railway config, Postgres schemas, service-JWT auth, installation checker | Done |
-| 2 | Catalog auditor + AI Discovery Score, streaming `llm.txt`, dashboard | Next |
-| 3 | UCP / ACP / MCP adapters, cart and inventory services | Planned |
+| 2 | Catalog auditor + AI Discovery Score, streaming `llm.txt`, dashboard | Done |
+| 3 | UCP / ACP / MCP adapters, cart and inventory services | Next |
 | 4 | Delegated-token agent checkout, paid draft orders | Planned |
 
 ## Local development
@@ -60,18 +60,36 @@ One Railway project, three services. Each app service has a `railway.json` (conf
 2. **backend-engine**: New service from this GitHub repo, root directory `/backend-engine`. Variables:
    - `DATABASE_URL=${{Postgres.DATABASE_URL}}`
    - `HOST=::` (Railway's private network is IPv6)
-   - `JWT_PUBLIC_KEY`, `TOKEN_ENCRYPTION_KEY` (from `make keys`)
+   - `JWT_PUBLIC_KEY`, `BACKEND_JWT_PRIVATE_KEY`, `TOKEN_ENCRYPTION_KEY` (from `make keys`)
+   - `FRONTEND_INTERNAL_URL=http://${{frontend-ui.RAILWAY_PRIVATE_DOMAIN}}:${{frontend-ui.PORT}}`
    - `SHOPIFY_API_KEY`, `SHOPIFY_API_SECRET`
    - Generate a public domain: agents and Shopify must reach `llm.txt`, protocol and webhook routes.
 3. **frontend-ui**: New service from this repo, root directory `/frontend-ui`. Variables:
    - `DATABASE_URL=${{Postgres.DATABASE_URL}}?schema=shopify_app`
    - `BACKEND_INTERNAL_URL=http://${{backend-engine.RAILWAY_PRIVATE_DOMAIN}}:${{backend-engine.PORT}}`
-   - `JWT_PRIVATE_KEY` (from `make keys`)
+   - `JWT_PRIVATE_KEY`, `BACKEND_JWT_PUBLIC_KEY` (from `make keys`)
    - `SHOPIFY_API_KEY`, `SHOPIFY_API_SECRET`, `SCOPES` (same as `shopify.app.toml`)
    - `SHOPIFY_APP_URL=https://<frontend public domain>`
    - Generate a public domain, then set it as `application_url` and the auth redirect in `shopify.app.toml` and run `npm run deploy`.
 
 Pushes to `main` redeploy only the service whose folder changed. Migrations run in each service's pre-deploy step (`alembic upgrade head`, `prisma migrate deploy`).
+
+## AI Discovery Score
+
+Each active product is scored 0-100 across eight weighted dimensions (identity 15, description 20, media 15, identifiers 15, offers 10, taxonomy 10, attributes 10, reviews 5). The store's score is the average. Meta-mapping rules (`/api/v1/merchant/mapping-rules`) let merchants credit facts encoded in tags or metafields, e.g. a `brand:(.+)` tag rule. See [`catalog_auditor.py`](backend-engine/app/services/catalog_auditor.py) for the exact rules.
+
+## Agent feed: llm.txt
+
+`GET /api/v1/agent-gateway/llm.txt?shop=<store>.myshopify.com` on backend-engine streams the store's policies, brand FAQs (`PUT /api/v1/merchant/faqs`), collections and active products as compact Markdown, cached for 10 minutes. To serve it at `https://<store>/llms.txt`, point a Shopify app proxy at backend-engine and add a URL redirect from `/llms.txt` to the proxy path.
+
+## Service-to-service auth
+
+| Direction | Purpose | Key holder | Verifier |
+|---|---|---|---|
+| frontend-ui -> backend-engine | dashboard API calls, merchant sync | `JWT_PRIVATE_KEY` (frontend) | `JWT_PUBLIC_KEY` (backend) |
+| backend-engine -> frontend-ui | fetch a fresh Shopify offline token (`POST /internal/admin-token`) | `BACKEND_JWT_PRIVATE_KEY` (backend) | `BACKEND_JWT_PUBLIC_KEY` (frontend) |
+
+Shopify offline tokens now expire and are refreshed by frontend-ui's Shopify library, which owns the session. backend-engine never refreshes tokens itself, so the two services can't invalidate each other's refresh tokens.
 
 ## Repository layout
 
@@ -79,7 +97,9 @@ Pushes to `main` redeploy only the service whose folder changed. Migrations run 
 backend-engine/
   app/api/          FastAPI routers and auth dependencies
   app/protocols/    UCP / ACP / MCP translation layer (Phase 3)
-  app/services/     pure business logic (installation_checker.py, ...)
+  app/services/     business logic: installation_checker, catalog_auditor, tag_mapper,
+                    llm_txt_renderer, shopify_client
+  app/jobs/         background jobs (catalog audit)
   app/repositories/ database access
   app/models/       SQLModel tables (gateway schema)
   migrations/       Alembic

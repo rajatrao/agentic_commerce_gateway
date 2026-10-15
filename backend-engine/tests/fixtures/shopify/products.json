@@ -1,0 +1,268 @@
+{
+ "complete": {
+  "id": "gid://shopify/Product/1001",
+  "title": "Summit Shell Jacket",
+  "handle": "summit-shell-jacket",
+  "status": "ACTIVE",
+  "vendor": "Acme Outfitters",
+  "productType": "Jackets",
+  "tags": [
+   "outerwear",
+   "waterproof",
+   "material:recycled-nylon",
+   "hiking"
+  ],
+  "description": "The Summit Shell is a 3-layer waterproof, breathable jacket built for alpine days. It uses a recycled nylon face fabric with a PFC-free DWR finish, fully taped seams, pit zips for venting, a helmet-compatible hood and two chest pockets that clear a harness. Weight 380 g (size M). Packs into its own pocket. Machine washable.",
+  "descriptionHtml": "<p>The Summit Shell...</p>",
+  "onlineStoreUrl": "https://acme.example/products/summit-shell-jacket",
+  "updatedAt": "2026-10-01T10:00:00Z",
+  "category": {
+   "id": "gid://shopify/TaxonomyCategory/aa-1-10-2",
+   "fullName": "Apparel & Accessories > Clothing > Outerwear > Coats & Jackets"
+  },
+  "seo": {
+   "title": "Summit Shell Waterproof Jacket",
+   "description": "3-layer recycled nylon shell with pit zips."
+  },
+  "options": [
+   {
+    "name": "Size",
+    "values": [
+     "S",
+     "M",
+     "L"
+    ]
+   }
+  ],
+  "priceRangeV2": {
+   "minVariantPrice": {
+    "amount": "249.0",
+    "currencyCode": "USD"
+   },
+   "maxVariantPrice": {
+    "amount": "249.0",
+    "currencyCode": "USD"
+   }
+  },
+  "totalInventory": 42,
+  "media": {
+   "nodes": [
+    {
+     "mediaContentType": "IMAGE",
+     "alt": "Front view",
+     "image": {
+      "url": "https://cdn/1.jpg",
+      "altText": "Front view"
+     }
+    },
+    {
+     "mediaContentType": "IMAGE",
+     "alt": "Back view",
+     "image": {
+      "url": "https://cdn/2.jpg",
+      "altText": "Back view"
+     }
+    },
+    {
+     "mediaContentType": "IMAGE",
+     "alt": "Hood detail",
+     "image": {
+      "url": "https://cdn/3.jpg",
+      "altText": "Hood detail"
+     }
+    }
+   ]
+  },
+  "variants": {
+   "nodes": [
+    {
+     "id": "gid://shopify/ProductVariant/1",
+     "title": "S",
+     "sku": "SSJ-S",
+     "barcode": "0012345678905",
+     "price": "249.00",
+     "compareAtPrice": null,
+     "availableForSale": true,
+     "inventoryQuantity": 10,
+     "inventoryItem": {
+      "tracked": true
+     }
+    },
+    {
+     "id": "gid://shopify/ProductVariant/2",
+     "title": "M",
+     "sku": "SSJ-M",
+     "barcode": "4006381333931",
+     "price": "249.00",
+     "compareAtPrice": null,
+     "availableForSale": true,
+     "inventoryQuantity": 20,
+     "inventoryItem": {
+      "tracked": true
+     }
+    },
+    {
+     "id": "gid://shopify/ProductVariant/3",
+     "title": "L",
+     "sku": "SSJ-L",
+     "barcode": "73513537",
+     "price": "249.00",
+     "compareAtPrice": null,
+     "availableForSale": false,
+     "inventoryQuantity": 0,
+     "inventoryItem": {
+      "tracked": true
+     }
+    }
+   ]
+  },
+  "metafields": {
+   "nodes": [
+    {
+     "namespace": "reviews",
+     "key": "rating",
+     "type": "rating",
+     "value": "{\"value\":\"4.7\",\"scale_min\":\"1.0\",\"scale_max\":\"5.0\"}"
+    },
+    {
+     "namespace": "custom",
+     "key": "care",
+     "type": "single_line_text_field",
+     "value": "Machine wash cold"
+    }
+   ]
+  }
+ },
+ "sparse": {
+  "id": "gid://shopify/Product/1002",
+  "title": "MUG",
+  "handle": "mug",
+  "status": "ACTIVE",
+  "vendor": "",
+  "productType": "",
+  "tags": [],
+  "description": "",
+  "descriptionHtml": "",
+  "onlineStoreUrl": null,
+  "updatedAt": "2026-10-01T10:00:00Z",
+  "category": null,
+  "seo": {
+   "title": null,
+   "description": null
+  },
+  "options": [
+   {
+    "name": "Title",
+    "values": [
+     "Default Title"
+    ]
+   }
+  ],
+  "priceRangeV2": {
+   "minVariantPrice": {
+    "amount": "12.0",
+    "currencyCode": "USD"
+   },
+   "maxVariantPrice": {
+    "amount": "12.0",
+    "currencyCode": "USD"
+   }
+  },
+  "totalInventory": 0,
+  "media": {
+   "nodes": []
+  },
+  "variants": {
+   "nodes": [
+    {
+     "id": "gid://shopify/ProductVariant/9",
+     "title": "Default Title",
+     "sku": "",
+     "barcode": "123",
+     "price": "12.00",
+     "compareAtPrice": null,
+     "availableForSale": true,
+     "inventoryQuantity": 0,
+     "inventoryItem": {
+      "tracked": false
+     }
+    }
+   ]
+  },
+  "metafields": {
+   "nodes": []
+  }
+ },
+ "partial": {
+  "id": "gid://shopify/Product/1003",
+  "title": "Trail Running Socks",
+  "handle": "trail-running-socks",
+  "status": "ACTIVE",
+  "vendor": "Acme Outfitters",
+  "productType": "Socks",
+  "tags": [
+   "running",
+   "socks"
+  ],
+  "description": "Merino blend socks with a cushioned sole and a seamless toe for long runs on rough trails.",
+  "descriptionHtml": "",
+  "onlineStoreUrl": null,
+  "updatedAt": "2026-10-01T10:00:00Z",
+  "category": null,
+  "seo": {
+   "title": null,
+   "description": null
+  },
+  "options": [
+   {
+    "name": "Title",
+    "values": [
+     "Default Title"
+    ]
+   }
+  ],
+  "priceRangeV2": {
+   "minVariantPrice": {
+    "amount": "12.0",
+    "currencyCode": "USD"
+   },
+   "maxVariantPrice": {
+    "amount": "12.0",
+    "currencyCode": "USD"
+   }
+  },
+  "totalInventory": 0,
+  "media": {
+   "nodes": [
+    {
+     "mediaContentType": "IMAGE",
+     "alt": null,
+     "image": {
+      "url": "https://cdn/s.jpg",
+      "altText": null
+     }
+    }
+   ]
+  },
+  "variants": {
+   "nodes": [
+    {
+     "id": "gid://shopify/ProductVariant/10",
+     "title": "Default Title",
+     "sku": "TRS-1",
+     "barcode": "",
+     "price": "18.00",
+     "compareAtPrice": null,
+     "availableForSale": true,
+     "inventoryQuantity": 5,
+     "inventoryItem": {
+      "tracked": true
+     }
+    }
+   ]
+  },
+  "metafields": {
+   "nodes": []
+  }
+ }
+}

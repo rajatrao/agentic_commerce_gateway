@@ -10,10 +10,7 @@ import { SignJWT, importPKCS8, type CryptoKey, type KeyObject } from "jose";
  * - 60 second lifetime plus a unique `jti` that the backend rejects if replayed.
  */
 
-export type ServiceScope =
-  | "merchant:read"
-  | "merchant:write"
-  | "internal:sync";
+export type ServiceScope = "merchant:read" | "merchant:write" | "internal:sync";
 
 export const JWT_ISSUER = "frontend-ui";
 export const JWT_AUDIENCE = "backend-engine";

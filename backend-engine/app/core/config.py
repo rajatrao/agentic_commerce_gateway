@@ -32,12 +32,21 @@ class Settings(BaseSettings):
     jwt_audience: str = "backend-engine"
     jwt_leeway_seconds: int = 10
 
+    # Reverse direction: backend-engine -> frontend-ui, used to fetch a fresh (auto-refreshed)
+    # offline Admin API token. Ed25519; backend holds only this private key.
+    backend_jwt_private_key: str = ""
+    frontend_internal_url: str = ""
+
     # Fernet key used to encrypt merchants' offline Admin API tokens at rest.
     token_encryption_key: str = ""
 
     # Outbound HTTP used by the installation checker.
     http_timeout_seconds: float = 15.0
     http_user_agent: str = "AgenticCommerceGateway-InstallationChecker/0.1"
+
+    # llm.txt feed
+    llm_txt_cache_seconds: int = 600
+    llm_txt_max_products: int = 2000
 
     cors_origins: list[str] = Field(default_factory=list)
 
@@ -50,7 +59,7 @@ class Settings(BaseSettings):
             v = "postgresql+psycopg2://" + v.removeprefix("postgresql://")
         return v
 
-    @field_validator("jwt_public_key")
+    @field_validator("jwt_public_key", "backend_jwt_private_key")
     @classmethod
     def _unescape_newlines(cls, v: str) -> str:
         # PEM keys are usually stored in env vars with literal "\n".

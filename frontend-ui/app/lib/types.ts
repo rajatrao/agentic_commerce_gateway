@@ -37,3 +37,39 @@ export interface MerchantSyncResult {
   status: string;
   installed_at: string;
 }
+
+export interface AuditRun {
+  id: string;
+  status: "running" | "completed" | "failed";
+  started_at: string;
+  finished_at: string | null;
+  products_scanned: number;
+  avg_score: string | null;
+}
+
+export interface AuditSummary {
+  run: AuditRun | null;
+  completed_run: AuditRun | null;
+  ai_discovery_score: string | null;
+  grade_counts: Partial<
+    Record<"excellent" | "good" | "needs_work" | "poor", number>
+  >;
+  dimension_averages: Record<string, { points: number; max: number }>;
+  top_issues: { code: string; count: number; message: string }[];
+}
+
+export interface ProductAudit {
+  product_gid: string;
+  title: string;
+  score: number;
+  breakdown: Record<string, { points: number; max: number }>;
+  missing_fields: string[];
+  issues: string[];
+  admin_url: string;
+}
+
+export interface ProductAuditPage {
+  run_id: string;
+  total: number;
+  items: ProductAudit[];
+}

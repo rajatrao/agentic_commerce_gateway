@@ -213,6 +213,8 @@ There are four trust boundaries, each with its own mechanism:
    - `jti` replay cache: in-memory with a TTL at first, Redis later if we scale horizontally.
    - `/internal/*` (token sync) also requires `scope=internal:sync`.
 
+2b. **FastAPI → Remix (fresh Shopify tokens, added in Phase 2).** Shopify offline tokens now expire and are refreshed by the Shopify library in Remix, which owns the session. FastAPI therefore asks Remix for a valid token with `POST /internal/admin-token`, authenticated by a second Ed25519 pair (`BACKEND_JWT_PRIVATE_KEY` in FastAPI, `BACKEND_JWT_PUBLIC_KEY` in Remix), and caches it until five minutes before expiry. The token synced at install is only a fallback.
+
 3. **Shopify → FastAPI webhooks.** These are verified with `X-Shopify-Hmac-Sha256` (HMAC-SHA256 of the raw body using the app secret) and deduped by `X-Shopify-Webhook-Id`. That includes `app/uninstalled` and the mandatory GDPR topics.
 
 4. **AI agents → FastAPI protocol endpoints.**

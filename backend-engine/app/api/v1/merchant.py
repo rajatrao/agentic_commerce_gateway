@@ -41,7 +41,7 @@ async def run_installation_check(
     try:
         report = await checker.check(body.store_url or merchant.shop_domain, body.product_url)
     except UnsafeURLError as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
     row = InstallationCheckRepository(session).save_report(merchant.id, report)
     return _to_out(row)
 

@@ -1,0 +1,9 @@
+node_modules
+build
+.cache
+.react-router
+.shopify
+.env
+.env.*
+extensions/*/dist
+**/*.test.ts

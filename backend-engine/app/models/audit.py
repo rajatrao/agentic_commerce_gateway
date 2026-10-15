@@ -1,0 +1,76 @@
+import uuid
+from datetime import datetime
+from decimal import Decimal
+from enum import StrEnum
+from typing import Any
+
+from sqlalchemy import Column, Index, Numeric, SmallInteger, String
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
+from sqlmodel import Field, SQLModel
+
+from app.models.base import pg_enum, tz_column, utcnow
+
+
+class RunStatus(StrEnum):
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class InstallationCheck(SQLModel, table=True):
+    __tablename__ = "installation_checks"
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    merchant_id: uuid.UUID = Field(foreign_key="merchants.id", index=True, ondelete="CASCADE")
+    store_url: str
+    passed: bool = False
+    jsonld_valid: bool = False
+    schemas_found: list[str] = Field(
+        default_factory=list, sa_column=Column(ARRAY(String), nullable=False, server_default="{}")
+    )
+    has_product_schema: bool = False
+    has_org_schema: bool = False
+    app_block_enabled: bool = False
+    findings: dict[str, Any] = Field(
+        default_factory=dict, sa_column=Column(JSONB, nullable=False, server_default="{}")
+    )
+    checked_at: datetime = Field(default_factory=utcnow, sa_column=tz_column(index=True))
+
+
+class AuditRun(SQLModel, table=True):
+    __tablename__ = "audit_runs"
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    merchant_id: uuid.UUID = Field(foreign_key="merchants.id", index=True, ondelete="CASCADE")
+    status: RunStatus = Field(
+        default=RunStatus.RUNNING,
+        sa_column=Column(pg_enum(RunStatus, "run_status"), nullable=False),
+    )
+    started_at: datetime = Field(default_factory=utcnow, sa_column=tz_column())
+    finished_at: datetime | None = Field(default=None, sa_column=tz_column(nullable=True))
+    products_scanned: int = 0
+    avg_score: Decimal | None = Field(default=None, sa_column=Column(Numeric(5, 2)))
+
+
+class ProductAudit(SQLModel, table=True):
+    __tablename__ = "product_audits"
+    __table_args__ = (
+        Index(
+            "ix_product_audits_merchant_product_time", "merchant_id", "product_gid", "audited_at"
+        ),
+    )
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    run_id: uuid.UUID = Field(foreign_key="audit_runs.id", index=True, ondelete="CASCADE")
+    merchant_id: uuid.UUID = Field(foreign_key="merchants.id", ondelete="CASCADE")
+    product_gid: str
+    title: str
+    score: int = Field(sa_column=Column(SmallInteger, nullable=False))
+    breakdown: dict[str, Any] = Field(
+        default_factory=dict, sa_column=Column(JSONB, nullable=False, server_default="{}")
+    )
+    missing_fields: list[str] = Field(
+        default_factory=list, sa_column=Column(ARRAY(String), nullable=False, server_default="{}")
+    )
+    content_hash: str
+    audited_at: datetime = Field(default_factory=utcnow, sa_column=tz_column())

@@ -1,0 +1,39 @@
+{%- comment -%}
+  Agentic Commerce Gateway: Organization + WebSite JSON-LD, injected site-wide as an app embed.
+{%- endcomment -%}
+<script type="application/ld+json" data-acg-block="store-jsonld">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "Organization",
+        "@id": {{ shop.url | append: '/#organization' | json }},
+        "name": {{ shop.name | json }},
+        "url": {{ shop.url | json }}
+        {%- if settings.logo %},
+        "logo": {{ settings.logo | image_url: width: 600 | prepend: 'https:' | json }}
+        {%- endif %}
+      },
+      {
+        "@type": "WebSite",
+        "@id": {{ shop.url | append: '/#website' | json }},
+        "name": {{ shop.name | json }},
+        "url": {{ shop.url | json }},
+        "publisher": { "@id": {{ shop.url | append: '/#organization' | json }} },
+        "potentialAction": {
+          "@type": "SearchAction",
+          "target": {{ shop.url | append: routes.search_url | append: '?q={search_term_string}' | json }},
+          "query-input": "required name=search_term_string"
+        }
+      }
+    ]
+  }
+</script>
+
+{% schema %}
+{
+  "name": "t:store_jsonld.name",
+  "target": "head",
+  "settings": []
+}
+{% endschema %}

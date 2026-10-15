@@ -1,0 +1,60 @@
+# Smoke-test the exact production images Railway will run.
+#   docker compose -f docker-compose.prod.yml up --build
+
+name: agentic-commerce-gateway-prod
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: gateway
+      POSTGRES_PASSWORD: gateway
+      POSTGRES_DB: gateway
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gateway -d gateway"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  backend-migrate:
+    build: { context: ./backend-engine, target: runtime }
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      DATABASE_URL: postgresql://gateway:gateway@postgres:5432/gateway
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  backend:
+    build: { context: ./backend-engine, target: runtime }
+    env_file: [{ path: .env, required: false }]
+    environment:
+      DATABASE_URL: postgresql://gateway:gateway@postgres:5432/gateway
+      JWT_PUBLIC_KEY: ${JWT_PUBLIC_KEY:-}
+      TOKEN_ENCRYPTION_KEY: ${TOKEN_ENCRYPTION_KEY:-}
+      SHOPIFY_API_SECRET: ${SHOPIFY_API_SECRET:-}
+    ports: ["8000:8000"]
+    depends_on:
+      backend-migrate: { condition: service_completed_successfully }
+
+  frontend-migrate:
+    build: { context: ./frontend-ui, target: runtime }
+    command: ["npx", "prisma", "migrate", "deploy"]
+    environment:
+      DATABASE_URL: postgresql://gateway:gateway@postgres:5432/gateway?schema=shopify_app
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  frontend:
+    build: { context: ./frontend-ui, target: runtime }
+    env_file: [{ path: .env, required: false }]
+    environment:
+      DATABASE_URL: postgresql://gateway:gateway@postgres:5432/gateway?schema=shopify_app
+      BACKEND_INTERNAL_URL: http://backend:8000
+      JWT_PRIVATE_KEY: ${JWT_PRIVATE_KEY:-}
+      SHOPIFY_API_KEY: ${SHOPIFY_API_KEY:-}
+      SHOPIFY_API_SECRET: ${SHOPIFY_API_SECRET:-}
+      SHOPIFY_APP_URL: ${SHOPIFY_APP_URL:-http://localhost:3000}
+    ports: ["3000:3000"]
+    depends_on:
+      frontend-migrate: { condition: service_completed_successfully }
+      backend: { condition: service_started }

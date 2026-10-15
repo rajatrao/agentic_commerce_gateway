@@ -1,0 +1,81 @@
+# Local development stack: Postgres + backend-engine + frontend-ui, with hot reload.
+#   make keys            # once: generates .env with the Ed25519 + Fernet keys
+#   docker compose up    # http://localhost:8000/docs (API), http://localhost:3000 (app)
+
+name: agentic-commerce-gateway
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: gateway
+      POSTGRES_PASSWORD: gateway
+      POSTGRES_DB: gateway
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/00-schemas.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gateway -d gateway"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend-engine
+      target: dev
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      ENVIRONMENT: development
+      DATABASE_URL: postgresql://gateway:gateway@postgres:5432/gateway
+      JWT_PUBLIC_KEY: ${JWT_PUBLIC_KEY:-}
+      TOKEN_ENCRYPTION_KEY: ${TOKEN_ENCRYPTION_KEY:-}
+      SHOPIFY_API_KEY: ${SHOPIFY_API_KEY:-}
+      SHOPIFY_API_SECRET: ${SHOPIFY_API_SECRET:-}
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend-engine/app:/app/app
+      - ./backend-engine/migrations:/app/migrations
+      - ./backend-engine/tests:/app/tests
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=4)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  frontend:
+    build:
+      context: ./frontend-ui
+      target: dev
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: postgresql://gateway:gateway@postgres:5432/gateway?schema=shopify_app
+      BACKEND_INTERNAL_URL: http://backend:8000
+      JWT_PRIVATE_KEY: ${JWT_PRIVATE_KEY:-}
+      SHOPIFY_API_KEY: ${SHOPIFY_API_KEY:-}
+      SHOPIFY_API_SECRET: ${SHOPIFY_API_SECRET:-}
+      SHOPIFY_APP_URL: ${SHOPIFY_APP_URL:-http://localhost:3000}
+      SCOPES: read_products,read_inventory,read_themes,write_draft_orders,write_orders,read_shipping
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend-ui/app:/app/app
+      - ./frontend-ui/prisma:/app/prisma
+    depends_on:
+      postgres:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+
+volumes:
+  pgdata:

@@ -1,0 +1,77 @@
+{%- comment -%}
+  Agentic Commerce Gateway: Product JSON-LD.
+  Add this block to the product template. The `data-acg-block` marker lets the
+  gateway's installation checker confirm the block is active.
+{%- endcomment -%}
+{%- assign p = product | default: closest.product -%}
+{%- if p -%}
+  {%- assign v = p.selected_or_first_available_variant -%}
+  {%- capture brand_name -%}{{ p.vendor | default: shop.name }}{%- endcapture -%}
+  <script type="application/ld+json" data-acg-block="product-jsonld">
+    {
+      "@context": "https://schema.org",
+      "@type": "ProductGroup",
+      "@id": {{ shop.url | append: p.url | append: '#product' | json }},
+      "productGroupID": {{ p.id | json }},
+      "name": {{ p.title | json }},
+      "description": {{ p.description | strip_html | strip_newlines | truncate: 5000 | json }},
+      "url": {{ shop.url | append: p.url | json }},
+      "brand": { "@type": "Brand", "name": {{ brand_name | json }} },
+      {%- if p.featured_media %}
+      "image": [
+        {%- for media in p.media limit: 10 -%}
+          {%- if media.media_type == 'image' -%}
+            {{ media | image_url: width: 1200 | prepend: 'https:' | json }}{% unless forloop.last %},{% endunless %}
+          {%- endif -%}
+        {%- endfor -%}
+      ],
+      {%- endif %}
+      {%- if p.metafields.reviews.rating.value and p.metafields.reviews.rating_count.value %}
+      "aggregateRating": {
+        "@type": "AggregateRating",
+        "ratingValue": {{ p.metafields.reviews.rating.value.rating | json }},
+        "bestRating": {{ p.metafields.reviews.rating.value.scale_max | json }},
+        "reviewCount": {{ p.metafields.reviews.rating_count.value | json }}
+      },
+      {%- endif %}
+      "variesBy": [{%- for option in p.options_with_values -%}{{ option.name | json }}{% unless forloop.last %},{% endunless %}{%- endfor -%}],
+      "hasVariant": [
+        {%- for variant in p.variants limit: 100 -%}
+        {
+          "@type": "Product",
+          "@id": {{ shop.url | append: variant.url | append: '#variant' | json }},
+          "name": {{ variant.title | prepend: ' - ' | prepend: p.title | json }},
+          "description": {{ p.description | strip_html | strip_newlines | truncate: 500 | json }},
+          {%- if variant.sku != blank %}"sku": {{ variant.sku | json }},{% endif %}
+          {%- if variant.barcode != blank %}"gtin": {{ variant.barcode | json }},{% endif %}
+          "image": {{ variant.featured_media | default: p.featured_media | image_url: width: 1200 | prepend: 'https:' | json }},
+          "offers": {
+            "@type": "Offer",
+            "url": {{ shop.url | append: variant.url | json }},
+            "price": {{ variant.price | divided_by: 100.0 | json }},
+            "priceCurrency": {{ cart.currency.iso_code | json }},
+            "availability": "https://schema.org/{% if variant.available %}InStock{% else %}OutOfStock{% endif %}",
+            "itemCondition": "https://schema.org/NewCondition"
+          }
+        }{% unless forloop.last %},{% endunless %}
+        {%- endfor -%}
+      ],
+      "offers": {
+        "@type": "Offer",
+        "url": {{ shop.url | append: v.url | json }},
+        "price": {{ v.price | divided_by: 100.0 | json }},
+        "priceCurrency": {{ cart.currency.iso_code | json }},
+        "availability": "https://schema.org/{% if v.available %}InStock{% else %}OutOfStock{% endif %}"
+      }
+    }
+  </script>
+{%- endif -%}
+
+{% schema %}
+{
+  "name": "t:product_jsonld.name",
+  "target": "section",
+  "enabled_on": { "templates": ["product"] },
+  "settings": []
+}
+{% endschema %}

@@ -1,0 +1,40 @@
+# Shopify app configuration. Run `npm run config:link` on your machine to fill in
+# client_id / application_url for your Partner app.
+client_id = ""
+name = "Agentic Commerce Gateway"
+application_url = "https://example.com"
+embedded = true
+
+[build]
+automatically_update_urls_on_dev = true
+include_config_on_deploy = true
+
+[access_scopes]
+# read_products/read_inventory: catalog audit + llm.txt (Phase 2)
+# read_themes: installation checker app-block detection
+# write_draft_orders/write_orders/read_shipping: agent checkout (Phases 3-4)
+scopes = "read_products,read_inventory,read_themes,write_draft_orders,write_orders,read_shipping"
+
+[auth]
+redirect_urls = ["https://example.com/auth/callback"]
+
+[webhooks]
+api_version = "2026-10"
+
+  # Handled by: /app/routes/webhooks.app.uninstalled.tsx (forwards to backend-engine)
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/app/uninstalled"
+  topics = ["app/uninstalled"]
+
+  # Handled by: /app/routes/webhooks.app.scopes_update.tsx
+  [[webhooks.subscriptions]]
+  topics = ["app/scopes_update"]
+  uri = "/webhooks/app/scopes_update"
+
+  # Mandatory GDPR compliance topics. Handled by /app/routes/webhooks.compliance.tsx
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/compliance"
+  compliance_topics = ["customers/data_request", "customers/redact", "shop/redact"]
+
+[pos]
+embedded = false

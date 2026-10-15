@@ -1,0 +1,37 @@
+// Prisma owns only the Shopify session table, in the `shopify_app` Postgres schema.
+// All gateway domain tables live in the `gateway` schema and are owned by
+// backend-engine (Alembic). The UI reads them through the FastAPI API, never directly.
+//
+// DATABASE_URL must point at the shared database with `?schema=shopify_app`, e.g.
+//   postgresql://gateway:gateway@localhost:5432/gateway?schema=shopify_app
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Session {
+  id                  String    @id
+  shop                String
+  state               String
+  isOnline            Boolean   @default(false)
+  scope               String?
+  expires             DateTime?
+  accessToken         String
+  userId              BigInt?
+  firstName           String?
+  lastName            String?
+  email               String?
+  accountOwner        Boolean   @default(false)
+  locale              String?
+  collaborator        Boolean?  @default(false)
+  emailVerified       Boolean?  @default(false)
+  refreshToken        String?
+  refreshTokenExpires DateTime?
+
+  @@index([shop])
+}

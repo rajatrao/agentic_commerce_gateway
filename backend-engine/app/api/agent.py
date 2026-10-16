@@ -11,7 +11,7 @@ from typing import Any
 import structlog
 from fastapi import Request
 from fastapi.responses import JSONResponse
-from sqlmodel import Session
+from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.core.config import Settings
 from app.jobs.catalog_audit import shopify_client_for
@@ -50,12 +50,12 @@ def presented_key(request: Request) -> str | None:
     return request.headers.get("x-api-key")
 
 
-def resolve_agent(
-    session: Session, key: str | None, protocol: AgentProtocol | None, scope: str | None
+async def resolve_agent(
+    session: AsyncSession, key: str | None, protocol: AgentProtocol | None, scope: str | None
 ) -> AgentPrincipal:
     if not key:
         raise ProtocolError(401, "unauthorized", "missing API key")
-    principal = AgentClientRepository(session).authenticate(key, key_verifier)
+    principal = await AgentClientRepository(session).authenticate(key, key_verifier)
     if principal is None:
         raise ProtocolError(401, "unauthorized", "invalid or revoked API key")
     if protocol is not None and principal.client.protocol is not protocol:
@@ -85,7 +85,7 @@ def payment_gateway(state: Any, settings: Settings) -> PaymentGateway:
 
 
 def payment_processor(
-    session: Session,
+    session: AsyncSession,
     merchant: Merchant,
     carts: CartManager,
     shopify: ShopifyQuery,
@@ -116,21 +116,15 @@ class CheckoutHandler:
         self,
         adapter: ProtocolAdapter,
         request: Request,
-        session: Session,
+        session: AsyncSession,
         settings: Settings,
         tokens: ShopifyTokenProvider,
-        *,
-        any_protocol: bool = False,
+        principal: AgentPrincipal,
     ) -> None:
         self.adapter = adapter
         self.request = request
         self.session = session
-        self.principal = resolve_agent(
-            session,
-            presented_key(request),
-            None if any_protocol else adapter.protocol,
-            CHECKOUT_SCOPE,
-        )
+        self.principal = principal
         client = shopify_client_for(
             self.principal.merchant, request.app.state.http_client, tokens, settings
         )
@@ -138,6 +132,25 @@ class CheckoutHandler:
         self.payments = payment_processor(
             session, self.principal.merchant, self.carts, client, request.app.state, settings
         )
+
+    @classmethod
+    async def create(
+        cls,
+        adapter: ProtocolAdapter,
+        request: Request,
+        session: AsyncSession,
+        settings: Settings,
+        tokens: ShopifyTokenProvider,
+        *,
+        any_protocol: bool = False,
+    ) -> "CheckoutHandler":
+        principal = await resolve_agent(
+            session,
+            presented_key(request),
+            None if any_protocol else adapter.protocol,
+            CHECKOUT_SCOPE,
+        )
+        return cls(adapter, request, session, settings, tokens, principal)
 
     async def checkout(self, cart_id: str, payment: PaymentPayload) -> CheckoutOutcome:
         try:
@@ -160,12 +173,12 @@ class CheckoutHandler:
     def merchant_id(self) -> uuid.UUID:
         return self.principal.merchant.id
 
-    def cart(self, cart_id: str) -> AgentCart:
+    async def cart(self, cart_id: str) -> AgentCart:
         try:
             parsed = uuid.UUID(cart_id)
         except ValueError:
             raise ProtocolError(404, "not_found", "checkout session not found") from None
-        return self._cart_call(lambda: self.carts.get(self.merchant_id, parsed))
+        return await self._cart_call(self.carts.get(self.merchant_id, parsed))
 
     async def body(self) -> Any:
         try:
@@ -190,7 +203,7 @@ class CheckoutHandler:
         records = IdempotencyRepository(self.session)
         fingerprint = request_fingerprint(self.request.method, self.request.url.path, body)
         try:
-            stored = records.begin(client_id, key, fingerprint)
+            stored = await records.begin(client_id, key, fingerprint)
         except IdempotencyConflict as exc:
             if exc.reason == "mismatch":
                 raise ProtocolError(
@@ -212,18 +225,18 @@ class CheckoutHandler:
             result = await self._upstream_call(operation)
         except ProtocolError as exc:
             if exc.status >= 500:
-                records.release(client_id, key)
+                await records.release(client_id, key)
             else:
-                records.finish(client_id, key, exc.status, self.adapter.render_error(exc))
+                await records.finish(client_id, key, exc.status, self.adapter.render_error(exc))
             raise
         except Exception:
-            records.release(client_id, key)
+            await records.release(client_id, key)
             raise
         if isinstance(result, Rendered):
             status, rendered = result.status, result.body
         else:
             rendered = self.adapter.render(result)
-        records.finish(client_id, key, status, rendered)
+        await records.finish(client_id, key, status, rendered)
         return JSONResponse(rendered, status, headers=self._echo_headers())
 
     async def _upstream_call(
@@ -252,14 +265,14 @@ class CheckoutHandler:
             ) from exc
 
     @staticmethod
-    def _cart_call(fn: Callable[[], AgentCart]) -> AgentCart:
+    async def _cart_call(call: Awaitable[AgentCart]) -> AgentCart:
         try:
-            return fn()
+            return await call
         except CartError as exc:
             raise ProtocolError.from_cart_error(exc) from exc
 
-    def cancel(self, cart: AgentCart) -> AgentCart:
-        return self._cart_call(lambda: self.carts.cancel(cart))
+    async def cancel(self, cart: AgentCart) -> AgentCart:
+        return await self._cart_call(self.carts.cancel(cart))
 
     def _echo_headers(self) -> dict[str, str]:
         return {

@@ -11,7 +11,6 @@ from mcp.server.mcpserver import Context
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.server.streamable_http_manager import StreamableHTTPASGIApp
 from mcp.server.transport_security import TransportSecuritySettings
-from sqlmodel import Session
 from starlette.datastructures import State
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -20,7 +19,6 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from app.api.agent import payment_processor, presented_key, resolve_agent
 from app.core.config import get_settings
-from app.core.db import get_engine
 from app.jobs.catalog_audit import shopify_client_for
 from app.models import AgentProtocol, Merchant, MerchantStatus
 from app.protocols.base import ProtocolError
@@ -42,16 +40,17 @@ class AgentKeyAuth:
     """ASGI wrapper: rejects requests without a valid MCP agent key, otherwise records the agent
     in the request scope's state, where tool calls read it back."""
 
-    def __init__(self, app: ASGIApp) -> None:
+    def __init__(self, app: ASGIApp, state: State) -> None:
         self.app = app
+        self.state = state
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
-        with Session(get_engine()) as session:
+        async with self.state.db.session() as session:
             try:
-                principal = resolve_agent(
+                principal = await resolve_agent(
                     session, presented_key(Request(scope)), AgentProtocol.MCP, None
                 )
             except ProtocolError as exc:
@@ -85,8 +84,8 @@ def mount_mcp(routes: list[Any], state: State) -> MCPServer:
     async def open_scope(ctx: Context) -> AsyncIterator[ToolScope]:
         agent = _agent(ctx)
         settings = get_settings()
-        with Session(get_engine()) as session:
-            merchant = session.get(Merchant, agent.merchant_id)
+        async with state.db.session() as session:
+            merchant = await session.get(Merchant, agent.merchant_id)
             if merchant is None or merchant.status is not MerchantStatus.ACTIVE:
                 raise ToolError("store not available")
             client = shopify_client_for(merchant, state.http_client, state.shopify_tokens, settings)
@@ -109,6 +108,6 @@ def mount_mcp(routes: list[Any], state: State) -> MCPServer:
         transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
     )
     routes.append(
-        Route("/mcp", endpoint=AgentKeyAuth(StreamableHTTPASGIApp(server.session_manager)))
+        Route("/mcp", endpoint=AgentKeyAuth(StreamableHTTPASGIApp(server.session_manager), state))
     )
     return server

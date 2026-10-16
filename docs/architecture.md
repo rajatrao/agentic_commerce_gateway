@@ -213,7 +213,7 @@ There are four trust boundaries, each with its own mechanism:
    - It's signed **EdDSA (Ed25519)**. Remix holds the private key and FastAPI holds only the public key, so a compromised backend can't forge UI calls.
    - It's sent as `Authorization: Bearer <jwt>` over TLS on the private network.
    - The FastAPI `merchant_jwt` dependency verifies the signature, `aud`, `iss` and `exp` (with 10s leeway), then rejects the request unless `sub` matches an `active` row in `merchants`. Every query is scoped by that merchant id, which gives tenant isolation.
-   - `jti` replay cache: in-memory with a TTL at first, Redis later if we scale horizontally.
+   - `jti` replay guard: stored in Postgres (`gateway.service_token_jtis` in FastAPI, `shopify_app.ServiceTokenJti` in Remix) until the token expires, so a token is accepted once across every replica.
    - `/internal/*` (token sync) also requires `scope=internal:sync`.
 
 2b. **FastAPI → Remix (fresh Shopify tokens, added in Phase 2).** Shopify offline tokens now expire and are refreshed by the Shopify library in Remix, which owns the session. FastAPI therefore asks Remix for a valid token with `POST /internal/admin-token`, authenticated by a second Ed25519 pair (`BACKEND_JWT_PRIVATE_KEY` in FastAPI, `BACKEND_JWT_PUBLIC_KEY` in Remix), and caches it until five minutes before expiry. The token synced at install is only a fallback.

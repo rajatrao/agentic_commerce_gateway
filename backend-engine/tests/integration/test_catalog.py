@@ -1,5 +1,6 @@
 import copy
 import json
+import time
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -35,6 +36,19 @@ def install(client: TestClient, shop: str) -> None:
         headers=auth(shop, ["internal:sync"]),
     )
     assert resp.status_code == 200, resp.text
+
+
+def wait_for_audit(client: TestClient, shop: str, timeout: float = 10.0) -> dict[str, Any]:
+    """Audits run on the background worker: poll until the latest run settles."""
+    deadline = time.monotonic() + timeout
+    while True:
+        summary: dict[str, Any] = client.get(
+            "/api/v1/merchant/audits/latest", headers=auth(shop)
+        ).json()
+        if summary["run"] and summary["run"]["status"] not in ("queued", "running"):
+            return summary
+        assert time.monotonic() < deadline, f"audit did not finish: {summary['run']}"
+        time.sleep(0.05)
 
 
 def mock_shopify(router: respx.Router, shop: str, products: list[dict[str, Any]]) -> respx.Route:
@@ -121,10 +135,11 @@ def test_audit_run_end_to_end(client: TestClient) -> None:
     with respx.mock() as router:
         graphql = mock_shopify(router, shop, catalog())
         started = client.post("/api/v1/merchant/audits", headers=auth(shop))
-    assert started.status_code == 202
+        assert started.status_code == 202
+        assert started.json()["status"] in ("queued", "running")
+        summary = wait_for_audit(client, shop)
     assert graphql.call_count == 2  # two pages of products
 
-    summary = client.get("/api/v1/merchant/audits/latest", headers=auth(shop)).json()
     assert summary["run"]["status"] == "completed"
     assert summary["run"]["products_scanned"] == 3
     assert summary["ai_discovery_score"] == "52.33"
@@ -155,10 +170,11 @@ def test_failed_audit_is_marked_failed(client: TestClient) -> None:
         router.post(f"{FRONTEND_URL}/internal/admin-token").respond(
             200, json={"access_token": "shpat_fresh"}
         )
-        router.post(f"https://{shop}{GRAPHQL_PATH}").respond(403)
+        graphql = router.post(f"https://{shop}{GRAPHQL_PATH}").respond(403)
         client.post("/api/v1/merchant/audits", headers=auth(shop))
-    summary = client.get("/api/v1/merchant/audits/latest", headers=auth(shop)).json()
+        summary = wait_for_audit(client, shop)
     assert summary["run"]["status"] == "failed"
+    assert graphql.call_count == 1  # an auth failure is not retried
     assert summary["completed_run"] is None
 
 
@@ -184,6 +200,7 @@ def test_mapping_rules_crud_and_effect_on_score(client: TestClient) -> None:
     with respx.mock() as router:
         mock_shopify(router, shop, [sparse])
         client.post("/api/v1/merchant/audits", headers=auth(shop))
+        wait_for_audit(client, shop)
     item = client.get("/api/v1/merchant/audits/latest/products", headers=auth(shop)).json()
     assert "brand_missing" not in item["items"][0]["missing_fields"]
 

@@ -120,6 +120,18 @@ Each step is appended to `transaction_events`; tokens are never stored or logged
 
 Shopify offline tokens now expire and are refreshed by frontend-ui's Shopify library, which owns the session. backend-engine never refreshes tokens itself, so the two services can't invalidate each other's refresh tokens.
 
+## Running more than one replica
+
+Both services are safe to scale horizontally. Everything that has to be shared lives in Postgres:
+
+- **Service-JWT replay guard.** Each `jti` is stored until its token expires (`gateway.service_token_jtis` on backend-engine, `shopify_app.ServiceTokenJti` on frontend-ui), so a token is accepted once across all replicas.
+- **llm.txt cache.** Rendered feeds live in `gateway.llm_txt_cache`, so an FAQ edit on one replica invalidates every copy.
+- **Catalog audits.** `POST /api/v1/merchant/audits` queues a run. Every backend replica runs a worker that claims due runs with `FOR UPDATE SKIP LOCKED`, heartbeats while it works and retries transient failures with backoff (up to `AUDIT_MAX_ATTEMPTS`, default 3). If a process dies mid-audit, its heartbeat goes stale after `AUDIT_STALE_SECONDS` (default 120) and another worker restarts the run; writes from the abandoned attempt are rejected. On a graceful shutdown the run goes straight back to the queue. Set `AUDIT_WORKER_ENABLED=false` on replicas that should not run audits.
+
+The remaining in-process caches are performance-only: verified agent keys (revocation is still read from the database on every request) and Shopify Admin tokens.
+
+All database access in backend-engine is async (SQLAlchemy `AsyncSession` on psycopg 3), and CPU-heavy steps (argon2, storefront HTML parsing) run in worker threads, so a slow query or hash no longer stalls the event loop. Alembic still uses the synchronous psycopg2 driver.
+
 ## Repository layout
 
 ```
@@ -129,7 +141,7 @@ backend-engine/
   app/services/     business logic: installation_checker, catalog_auditor, tag_mapper,
                     llm_txt_renderer, shopify_client, cart_manager, agent_keys,
                     payment_processor, payment_gateway (Stripe)
-  app/jobs/         background jobs (catalog audit)
+  app/jobs/         durable catalog-audit worker (Postgres job queue)
   app/repositories/ database access
   app/models/       SQLModel tables (gateway schema)
   migrations/       Alembic

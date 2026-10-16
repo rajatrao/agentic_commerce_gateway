@@ -3,21 +3,20 @@
 import re
 import uuid
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.api.deps import (
     CurrentMerchant,
-    HttpClientDep,
     SessionDep,
     SettingsDep,
-    TokenProviderDep,
     require_service_scopes,
 )
-from app.jobs.catalog_audit import run_catalog_audit
+from app.jobs.audit_worker import AuditWorker
 from app.models import AuditRun, MappingSource, MetaMappingRule
 from app.repositories.audits import AuditRepository
 from app.repositories.mapping_rules import MappingRuleRepository
+from app.repositories.shared_state import LlmTxtCacheRepository
 from app.schemas.audit import (
     AuditRunOut,
     AuditSummaryOut,
@@ -53,28 +52,27 @@ def _run_out(run: AuditRun | None) -> AuditRunOut | None:
     status_code=status.HTTP_202_ACCEPTED,
     dependencies=write,
 )
-def start_audit(
-    merchant: CurrentMerchant,
-    session: SessionDep,
-    settings: SettingsDep,
-    http: HttpClientDep,
-    tokens: TokenProviderDep,
-    background: BackgroundTasks,
+async def start_audit(
+    merchant: CurrentMerchant, session: SessionDep, request: Request
 ) -> AuditRunOut:
+    """Queue an audit. `jobs.audit_worker` (on any replica) runs it; a restart mid-run only
+    delays it, because a run whose worker stops heartbeating is picked up again."""
     audits = AuditRepository(session)
-    existing = audits.active_run(merchant.id)
+    existing = await audits.active_run(merchant.id)
     if existing is not None:
         return _run_out(existing)  # type: ignore[return-value]
-    run = audits.create_run(merchant.id)
-    background.add_task(run_catalog_audit, run.id, merchant.id, http, tokens, settings)
+    run = await audits.create_run(merchant.id)
+    worker: AuditWorker | None = getattr(request.app.state, "audit_worker", None)
+    if worker is not None:
+        worker.wake()
     return _run_out(run)  # type: ignore[return-value]
 
 
 @router.get("/audits/latest", response_model=AuditSummaryOut)
-def latest_audit(merchant: CurrentMerchant, session: SessionDep) -> AuditSummaryOut:
+async def latest_audit(merchant: CurrentMerchant, session: SessionDep) -> AuditSummaryOut:
     audits = AuditRepository(session)
-    latest = audits.latest_run(merchant.id)
-    completed = audits.latest_run(merchant.id, completed_only=True)
+    latest = await audits.latest_run(merchant.id)
+    completed = await audits.latest_run(merchant.id, completed_only=True)
     if completed is None:
         return AuditSummaryOut(
             run=_run_out(latest),
@@ -88,11 +86,11 @@ def latest_audit(merchant: CurrentMerchant, session: SessionDep) -> AuditSummary
         run=_run_out(latest),
         completed_run=_run_out(completed),
         ai_discovery_score=completed.avg_score,
-        grade_counts=audits.grade_counts(completed.id),
-        dimension_averages=audits.dimension_averages(completed.id),
+        grade_counts=await audits.grade_counts(completed.id),
+        dimension_averages=await audits.dimension_averages(completed.id),
         top_issues=[
             IssueCount(code=c, count=n, message=ISSUE_MESSAGES.get(c, c))
-            for c, n in audits.top_issues(completed.id)
+            for c, n in await audits.top_issues(completed.id)
         ],
     )
 
@@ -104,7 +102,7 @@ def _admin_url(shop: str, gid: str) -> str:
 
 
 @router.get("/audits/latest/products", response_model=ProductAuditPage)
-def latest_audit_products(
+async def latest_audit_products(
     merchant: CurrentMerchant,
     session: SessionDep,
     max_score: int = Query(100, ge=0, le=100),
@@ -113,10 +111,10 @@ def latest_audit_products(
     offset: int = Query(0, ge=0),
 ) -> ProductAuditPage:
     audits = AuditRepository(session)
-    completed = audits.latest_run(merchant.id, completed_only=True)
+    completed = await audits.latest_run(merchant.id, completed_only=True)
     if completed is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "no completed audit yet")
-    rows, total = audits.products(
+    rows, total = await audits.products(
         completed.id, max_score=max_score, issue=issue, limit=limit, offset=offset
     )
     return ProductAuditPage(
@@ -154,8 +152,10 @@ def _rule_out(rule: MetaMappingRule) -> MappingRuleOut:
 
 
 @router.get("/mapping-rules", response_model=list[MappingRuleOut])
-def list_mapping_rules(merchant: CurrentMerchant, session: SessionDep) -> list[MappingRuleOut]:
-    return [_rule_out(r) for r in MappingRuleRepository(session).list_for(merchant.id)]
+async def list_mapping_rules(
+    merchant: CurrentMerchant, session: SessionDep
+) -> list[MappingRuleOut]:
+    return [_rule_out(r) for r in await MappingRuleRepository(session).list_for(merchant.id)]
 
 
 @router.post(
@@ -164,7 +164,7 @@ def list_mapping_rules(merchant: CurrentMerchant, session: SessionDep) -> list[M
     status_code=status.HTTP_201_CREATED,
     dependencies=write,
 )
-def create_mapping_rule(
+async def create_mapping_rule(
     body: MappingRuleIn, merchant: CurrentMerchant, session: SessionDep
 ) -> MappingRuleOut:
     try:
@@ -185,14 +185,16 @@ def create_mapping_rule(
         priority=body.priority,
         active=body.active,
     )
-    return _rule_out(MappingRuleRepository(session).add(rule))
+    return _rule_out(await MappingRuleRepository(session).add(rule))
 
 
 @router.delete(
     "/mapping-rules/{rule_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=write
 )
-def delete_mapping_rule(rule_id: uuid.UUID, merchant: CurrentMerchant, session: SessionDep) -> None:
-    if not MappingRuleRepository(session).delete(merchant.id, rule_id):
+async def delete_mapping_rule(
+    rule_id: uuid.UUID, merchant: CurrentMerchant, session: SessionDep
+) -> None:
+    if not await MappingRuleRepository(session).delete(merchant.id, rule_id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "rule not found")
 
 
@@ -200,17 +202,19 @@ def delete_mapping_rule(rule_id: uuid.UUID, merchant: CurrentMerchant, session: 
 
 
 @router.get("/faqs", response_model=FaqList)
-def get_faqs(merchant: CurrentMerchant) -> FaqList:
+async def get_faqs(merchant: CurrentMerchant) -> FaqList:
     return FaqList.model_validate({"faqs": merchant.settings.get("faqs", [])})
 
 
 @router.put("/faqs", response_model=FaqList, dependencies=write)
-def put_faqs(
-    body: FaqList, merchant: CurrentMerchant, session: SessionDep, request: Request
+async def put_faqs(
+    body: FaqList, merchant: CurrentMerchant, session: SessionDep, settings: SettingsDep
 ) -> FaqList:
     merchant.settings = {**merchant.settings, "faqs": [f.model_dump() for f in body.faqs]}
     flag_modified(merchant, "settings")
     session.add(merchant)
-    session.commit()
-    request.app.state.llm_txt_cache.invalidate(merchant.shop_domain)
+    await session.commit()
+    await LlmTxtCacheRepository(session, settings.llm_txt_cache_seconds).invalidate(
+        merchant.shop_domain
+    )
     return body

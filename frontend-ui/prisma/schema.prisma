@@ -35,3 +35,12 @@ model Session {
 
   @@index([shop])
 }
+
+// `jti` of every backend-engine service JWT accepted on /internal routes, kept until the token
+// expires. Lives in Postgres so a replay is caught by any frontend-ui replica.
+model ServiceTokenJti {
+  jti       String   @id
+  expiresAt DateTime
+
+  @@index([expiresAt])
+}

@@ -13,7 +13,7 @@ router = APIRouter(prefix="/internal", tags=["internal"])
 
 
 @router.post("/merchants/sync", response_model=MerchantOut)
-def sync_merchant(
+async def sync_merchant(
     body: MerchantSyncRequest,
     session: SessionDep,
     settings: SettingsDep,
@@ -23,7 +23,9 @@ def sync_merchant(
     if claims.shop != body.shop:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "token subject does not match shop")
     token_enc = TokenCipher(settings.token_encryption_key).encrypt(body.access_token)
-    merchant = MerchantRepository(session).upsert_installation(body.shop, token_enc, body.scopes)
+    merchant = await MerchantRepository(session).upsert_installation(
+        body.shop, token_enc, body.scopes
+    )
     return MerchantOut(
         id=merchant.id,
         shop_domain=merchant.shop_domain,

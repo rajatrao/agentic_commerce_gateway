@@ -28,11 +28,11 @@ class MemoryCarts:
     def __init__(self) -> None:
         self.rows: dict[uuid.UUID, AgentCart] = {}
 
-    def get(self, merchant_id: uuid.UUID, cart_id: uuid.UUID) -> AgentCart | None:
+    async def get(self, merchant_id: uuid.UUID, cart_id: uuid.UUID) -> AgentCart | None:
         cart = self.rows.get(cart_id)
         return cart if cart and cart.merchant_id == merchant_id else None
 
-    def save(self, cart: AgentCart) -> AgentCart:
+    async def save(self, cart: AgentCart) -> AgentCart:
         self.rows[cart.id] = cart
         return cart
 
@@ -174,16 +174,16 @@ async def test_tax_is_spread_over_lines(manager: CartManager) -> None:
 
 async def test_cancel_and_expiry(manager: CartManager) -> None:
     cart = await create(manager, CartChanges(lines((101, 1)), BUYER, ADDRESS))
-    manager.cancel(cart)
+    await manager.cancel(cart)
     with pytest.raises(CartError) as exc:
         await manager.update(cart, CartChanges(buyer=BUYER))
     assert exc.value.code == "not_modifiable"
 
     other = await create(manager, CartChanges(lines((101, 1))))
     other.expires_at = utcnow() - timedelta(seconds=1)
-    assert manager.get(MERCHANT, other.id).status is CartStatus.EXPIRED
+    assert (await manager.get(MERCHANT, other.id)).status is CartStatus.EXPIRED
     with pytest.raises(CartError):
-        manager.get(uuid.uuid4(), other.id)
+        await manager.get(uuid.uuid4(), other.id)
 
 
 def test_variant_gid_accepts_ids_and_gids() -> None:

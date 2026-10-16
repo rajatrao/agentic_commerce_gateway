@@ -9,6 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlmodel import Session, select
 
+from tests.conftest import sync_engine
 from tests.fakes import FakeGateway, FakeShopify
 from tests.integration.test_agent_protocols import (
     ADDRESS_ACP,
@@ -59,21 +60,24 @@ def complete(client: TestClient, key: str, sid: str, token: str, idem: str) -> A
 
 
 def transactions(sid: str) -> list[Any]:
-    from app.core.db import get_engine
     from app.models import AgentTransaction
 
-    with Session(get_engine()) as s:
+    with Session(sync_engine()) as s:
         return list(
             s.exec(select(AgentTransaction).where(AgentTransaction.cart_id == sid)).all()  # type: ignore[arg-type]
         )
 
 
 def events(txn_id: Any) -> list[Any]:
-    from app.core.db import get_engine
-    from app.repositories.transactions import TransactionRepository
+    from app.models import TransactionEvent
 
-    with Session(get_engine()) as s:
-        return [(e.event_type, e.payload) for e in TransactionRepository(s).events(txn_id)]
+    with Session(sync_engine()) as s:
+        rows = s.exec(
+            select(TransactionEvent)
+            .where(TransactionEvent.transaction_id == txn_id)
+            .order_by(TransactionEvent.id)  # type: ignore[arg-type]
+        ).all()
+        return [(e.event_type, e.payload) for e in rows]
 
 
 @pytest.fixture

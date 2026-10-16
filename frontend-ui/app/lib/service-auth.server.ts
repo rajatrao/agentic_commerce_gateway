@@ -21,8 +21,53 @@ export interface BackendClaims {
   scopes: string[];
 }
 
+/**
+ * Records each accepted `jti` until its token expires. The default store is Postgres (Prisma),
+ * so a token replayed against another frontend-ui replica is still rejected.
+ */
+export interface JtiStore {
+  /** Returns false when the jti was already used. */
+  claim(jti: string, expiresAt: Date): Promise<boolean>;
+}
+
+/** Expired rows are swept on roughly one in this many claims. */
+const PURGE_ONE_IN = 100;
+
+export const prismaJtiStore: JtiStore = {
+  async claim(jti, expiresAt) {
+    // Imported lazily so modules (and tests) that never verify a token don't need a client.
+    const { default: prisma } = await import("../db.server");
+    if (Math.floor(Math.random() * PURGE_ONE_IN) === 0) {
+      await prisma.serviceTokenJti.deleteMany({
+        where: { expiresAt: { lt: new Date() } },
+      });
+    }
+    try {
+      await prisma.serviceTokenJti.create({ data: { jti, expiresAt } });
+      return true;
+    } catch (error) {
+      if ((error as { code?: string }).code === "P2002") return false; // unique violation
+      throw error;
+    }
+  },
+};
+
+/** Single-process store, for tests. */
+export function memoryJtiStore(): JtiStore {
+  const seen = new Map<string, number>();
+  return {
+    async claim(jti, expiresAt) {
+      const now = Date.now();
+      for (const [key, exp] of seen) if (exp < now) seen.delete(key);
+      if (seen.has(jti)) return false;
+      seen.set(jti, expiresAt.getTime());
+      return true;
+    },
+  };
+}
+
 let cachedKey: Promise<CryptoKey | KeyObject> | undefined;
-const seenJti = new Map<string, number>();
+let jtiStore: JtiStore = prismaJtiStore;
 
 function loadPublicKey(): Promise<CryptoKey | KeyObject> {
   if (!cachedKey) {
@@ -35,10 +80,10 @@ function loadPublicKey(): Promise<CryptoKey | KeyObject> {
   return cachedKey;
 }
 
-/** Test hook. */
-export function resetServiceAuthCache() {
+/** Test hook: forget the cached key and use `store` (default: a fresh in-memory store). */
+export function resetServiceAuthCache(store: JtiStore = memoryJtiStore()) {
   cachedKey = undefined;
-  seenJti.clear();
+  jtiStore = store;
 }
 
 export async function verifyBackendRequest(
@@ -65,12 +110,9 @@ export async function verifyBackendRequest(
     throw new ServiceAuthError("invalid service token");
   }
 
-  const now = Date.now();
-  for (const [jti, exp] of seenJti) if (exp < now) seenJti.delete(jti);
-  if (seenJti.has(payload.jti!)) {
+  if (!(await jtiStore.claim(payload.jti!, new Date(payload.exp! * 1000)))) {
     throw new ServiceAuthError("token replayed");
   }
-  seenJti.set(payload.jti!, payload.exp! * 1000);
 
   const scopes = Array.isArray(payload.scope)
     ? (payload.scope as string[])

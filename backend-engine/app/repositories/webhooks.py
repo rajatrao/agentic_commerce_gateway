@@ -1,17 +1,19 @@
 from typing import Any
 
+from sqlalchemy import update
 from sqlalchemy.dialects.postgresql import insert
-from sqlmodel import Session
+from sqlmodel import col
+from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.models import WebhookEvent
 from app.models.base import utcnow
 
 
 class WebhookEventRepository:
-    def __init__(self, session: Session) -> None:
+    def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    def record_if_new(
+    async def record_if_new(
         self, webhook_id: str, shop_domain: str, topic: str, payload: dict[str, Any]
     ) -> bool:
         """Insert the event; return False if this webhook id was already received."""
@@ -27,13 +29,14 @@ class WebhookEventRepository:
             .on_conflict_do_nothing(index_elements=["webhook_id"])
             .returning(WebhookEvent.__table__.c.id)  # type: ignore[attr-defined]
         )
-        inserted = self.session.execute(stmt).first()
-        self.session.commit()
+        inserted = (await self.session.execute(stmt)).first()
+        await self.session.commit()
         return inserted is not None
 
-    def mark_processed(self, webhook_id: str) -> None:
-        event = self.session.query(WebhookEvent).filter_by(webhook_id=webhook_id).one_or_none()
-        if event is not None:
-            event.processed_at = utcnow()
-            self.session.add(event)
-            self.session.commit()
+    async def mark_processed(self, webhook_id: str) -> None:
+        await self.session.exec(
+            update(WebhookEvent)
+            .where(col(WebhookEvent.webhook_id) == webhook_id)
+            .values(processed_at=utcnow())
+        )
+        await self.session.commit()

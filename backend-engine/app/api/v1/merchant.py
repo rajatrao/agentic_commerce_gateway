@@ -42,20 +42,20 @@ async def run_installation_check(
         report = await checker.check(body.store_url or merchant.shop_domain, body.product_url)
     except UnsafeURLError as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
-    row = InstallationCheckRepository(session).save_report(merchant.id, report)
+    row = await InstallationCheckRepository(session).save_report(merchant.id, report)
     return _to_out(row)
 
 
 @router.get("/installation-checks/latest", response_model=InstallationCheckOut)
-def latest_installation_check(
+async def latest_installation_check(
     merchant: CurrentMerchant, session: SessionDep
 ) -> InstallationCheckOut:
-    row = InstallationCheckRepository(session).latest(merchant.id)
+    row = await InstallationCheckRepository(session).latest(merchant.id)
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "no installation check yet")
     return _to_out(row)
 
 
 @router.get("/me")
-def me(merchant: CurrentMerchant) -> dict[str, str]:
+async def me(merchant: CurrentMerchant) -> dict[str, str]:
     return {"shop": merchant.shop_domain, "status": merchant.status.value}

@@ -46,16 +46,16 @@ async def shopify_webhook(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid json") from exc
 
     events = WebhookEventRepository(session)
-    if not events.record_if_new(
+    if not await events.record_if_new(
         x_shopify_webhook_id, x_shopify_shop_domain, x_shopify_topic, payload
     ):
         return {"status": "duplicate"}
 
     if x_shopify_topic == "app/uninstalled" or x_shopify_topic == "shop/redact":
-        MerchantRepository(session).mark_uninstalled(x_shopify_shop_domain)
+        await MerchantRepository(session).mark_uninstalled(x_shopify_shop_domain)
     elif x_shopify_topic not in HANDLED_TOPICS:
         log.info("webhook.unhandled_topic", topic=x_shopify_topic, shop=x_shopify_shop_domain)
     # customers/* : the gateway stores no customer PII beyond redacted transaction logs.
 
-    events.mark_processed(x_shopify_webhook_id)
+    await events.mark_processed(x_shopify_webhook_id)
     return {"status": "ok"}

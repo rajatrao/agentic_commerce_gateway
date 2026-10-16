@@ -172,8 +172,8 @@ class CartManager:
         self.carts = carts
         self.shopify = shopify
 
-    def get(self, merchant_id: uuid.UUID, cart_id: uuid.UUID) -> AgentCart:
-        cart = self.carts.get(merchant_id, cart_id)
+    async def get(self, merchant_id: uuid.UUID, cart_id: uuid.UUID) -> AgentCart:
+        cart = await self.carts.get(merchant_id, cart_id)
         if cart is None:
             raise CartError("not_found", "checkout session not found")
         if (
@@ -182,7 +182,7 @@ class CartManager:
             and cart.expires_at <= utcnow()
         ):
             cart.status = CartStatus.EXPIRED
-            cart = self.carts.save(cart)
+            cart = await self.carts.save(cart)
         return cart
 
     async def create(
@@ -209,12 +209,12 @@ class CartManager:
             raise CartError("not_modifiable", f"checkout session is {cart.status.value}")
         return await self._apply(cart, changes)
 
-    def cancel(self, cart: AgentCart) -> AgentCart:
+    async def cancel(self, cart: AgentCart) -> AgentCart:
         if cart.status not in (CartStatus.OPEN, CartStatus.READY):
             raise CartError("not_modifiable", f"checkout session is {cart.status.value}")
         cart.status = CartStatus.CANCELED
         cart.updated_at = utcnow()
-        return self.carts.save(cart)
+        return await self.carts.save(cart)
 
     # ------------------------------------------------------------------ internals
 
@@ -238,7 +238,7 @@ class CartManager:
         now = utcnow()
         cart.updated_at = now
         cart.expires_at = now + CART_TTL
-        return self.carts.save(cart)
+        return await self.carts.save(cart)
 
     async def _reprice(self, cart: AgentCart, explicit_rate: str | None) -> None:
         messages: list[dict[str, Any]] = []

@@ -14,19 +14,21 @@ write = [Depends(require_service_scopes("merchant:write"))]
 
 
 @router.get("/transactions", response_model=TransactionPage)
-def list_transactions(
+async def list_transactions(
     merchant: CurrentMerchant,
     session: SessionDep,
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ) -> TransactionPage:
-    total, rows = TransactionRepository(session).list_for(merchant.id, limit=limit, offset=offset)
+    total, rows = await TransactionRepository(session).list_for(
+        merchant.id, limit=limit, offset=offset
+    )
     client_ids = {t.agent_client_id for t in rows if t.agent_client_id}
     names = (
         {
             c.id: c.name
-            for c in session.exec(
-                select(AgentClient).where(col(AgentClient.id).in_(client_ids))
+            for c in (
+                await session.exec(select(AgentClient).where(col(AgentClient.id).in_(client_ids)))
             ).all()
         }
         if client_ids
@@ -72,16 +74,18 @@ def _payment_settings(merchant: CurrentMerchant, settings: SettingsDep) -> Payme
 
 
 @router.get("/payments", response_model=PaymentSettingsOut)
-def get_payment_settings(merchant: CurrentMerchant, settings: SettingsDep) -> PaymentSettingsOut:
+async def get_payment_settings(
+    merchant: CurrentMerchant, settings: SettingsDep
+) -> PaymentSettingsOut:
     return _payment_settings(merchant, settings)
 
 
 @router.put("/payments", response_model=PaymentSettingsOut, dependencies=write)
-def put_payment_settings(
+async def put_payment_settings(
     body: PaymentSettings, merchant: CurrentMerchant, session: SessionDep, settings: SettingsDep
 ) -> PaymentSettingsOut:
     merchant.settings = {**merchant.settings, "stripe_account_id": body.stripe_account_id}
     flag_modified(merchant, "settings")
     session.add(merchant)
-    session.commit()
+    await session.commit()
     return _payment_settings(merchant, settings)

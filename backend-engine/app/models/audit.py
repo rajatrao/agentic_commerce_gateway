@@ -12,6 +12,7 @@ from app.models.base import pg_enum, tz_column, utcnow
 
 
 class RunStatus(StrEnum):
+    QUEUED = "queued"
     RUNNING = "running"
     COMPLETED = "completed"
     FAILED = "failed"
@@ -38,18 +39,32 @@ class InstallationCheck(SQLModel, table=True):
 
 
 class AuditRun(SQLModel, table=True):
+    """A catalog audit, which doubles as its own job row.
+
+    `queued` runs are claimed by `jobs.audit_worker` with `FOR UPDATE SKIP LOCKED`. A `running`
+    run whose `heartbeat_at` goes stale (its worker died mid-run) is claimed again, up to the
+    worker's attempt limit.
+    """
+
     __tablename__ = "audit_runs"
+    __table_args__ = (Index("ix_audit_runs_status_next_attempt_at", "status", "next_attempt_at"),)
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     merchant_id: uuid.UUID = Field(foreign_key="merchants.id", index=True, ondelete="CASCADE")
     status: RunStatus = Field(
-        default=RunStatus.RUNNING,
+        default=RunStatus.QUEUED,
         sa_column=Column(pg_enum(RunStatus, "run_status"), nullable=False),
     )
     started_at: datetime = Field(default_factory=utcnow, sa_column=tz_column())
     finished_at: datetime | None = Field(default=None, sa_column=tz_column(nullable=True))
     products_scanned: int = 0
     avg_score: Decimal | None = Field(default=None, sa_column=Column(Numeric(5, 2)))
+    attempts: int = Field(
+        default=0, sa_column=Column(SmallInteger, nullable=False, server_default="0")
+    )
+    next_attempt_at: datetime = Field(default_factory=utcnow, sa_column=tz_column())
+    heartbeat_at: datetime | None = Field(default=None, sa_column=tz_column(nullable=True))
+    last_error: str | None = None
 
 
 class ProductAudit(SQLModel, table=True):

@@ -1,12 +1,32 @@
 import { generateKeyPairSync, randomUUID } from "node:crypto";
 import { SignJWT, importPKCS8 } from "jose";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  prismaJtiStore,
   resetServiceAuthCache,
   ServiceAuthError,
   verifyBackendRequest,
 } from "../service-auth.server";
+
+// A stand-in for the shared Postgres table: one Set seen by every "replica".
+const sharedRows = new Set<string>();
+vi.mock("../../db.server", () => ({
+  default: {
+    serviceTokenJti: {
+      deleteMany: vi.fn(async () => ({ count: 0 })),
+      create: vi.fn(async ({ data }: { data: { jti: string } }) => {
+        if (sharedRows.has(data.jti)) {
+          throw Object.assign(new Error("Unique constraint failed"), {
+            code: "P2002",
+          });
+        }
+        sharedRows.add(data.jti);
+        return data;
+      }),
+    },
+  },
+}));
 
 const keys = () =>
   generateKeyPairSync("ed25519", {
@@ -81,5 +101,21 @@ describe("verifyBackendRequest", () => {
     await expect(
       verifyBackendRequest(new Request("http://x"), "admin-token:read"),
     ).rejects.toThrow(/missing bearer/);
+  });
+});
+
+describe("jti stores", () => {
+  beforeEach(() => {
+    process.env.BACKEND_JWT_PUBLIC_KEY = backend.publicKey;
+  });
+
+  it("rejects a replay sent to another replica (shared Postgres store)", async () => {
+    const jwt = await token();
+    resetServiceAuthCache(prismaJtiStore); // replica A
+    await verifyBackendRequest(req(jwt), "admin-token:read");
+    resetServiceAuthCache(prismaJtiStore); // replica B: fresh process state, same table
+    await expect(
+      verifyBackendRequest(req(jwt), "admin-token:read"),
+    ).rejects.toThrow(/replayed/);
   });
 });

@@ -134,22 +134,22 @@ class PaymentProcessor:
             raise CheckoutError("invalid", f"unsupported payment provider {request.provider!r}")
         key = f"{request.agent_client_id or 'merchant'}:{request.idempotency_key}"
 
-        replay = self.txns.by_idempotency_key(merchant_id, key)
+        replay = await self.txns.by_idempotency_key(merchant_id, key)
         if replay is not None:
             if replay.cart_id != cart_id:
                 raise CheckoutError("invalid", "idempotency key was used for another checkout")
-            return CheckoutOutcome(replay, self.carts.get(merchant_id, cart_id))
+            return CheckoutOutcome(replay, await self.carts.get(merchant_id, cart_id))
 
-        cart = self.txns.lock_cart(merchant_id, cart_id)
+        cart = await self.txns.lock_cart(merchant_id, cart_id)
         if cart is None or (
             request.agent_client_id
             and cart.agent_client_id
             and cart.agent_client_id != request.agent_client_id
         ):
             raise CheckoutError("not_found", "checkout session not found")
-        if done := self.txns.completed_for_cart(cart):
+        if done := await self.txns.completed_for_cart(cart):
             raise CheckoutError("already_completed", f"already paid as order {done.order_name}")
-        if self.txns.blocking_for_cart(cart.id):
+        if await self.txns.blocking_for_cart(cart.id):
             raise CheckoutError("in_progress", "a payment for this checkout is already running")
         if cart.status not in (CartStatus.OPEN, CartStatus.READY):
             raise CheckoutError("not_modifiable", f"checkout session is {cart.status.value}")
@@ -160,7 +160,7 @@ class PaymentProcessor:
                 "payments_not_configured", "this store does not take agent payments yet"
             ) from exc
 
-        txn = self.txns.save(
+        txn = await self.txns.save(
             AgentTransaction(
                 merchant_id=merchant_id,
                 cart_id=cart.id,
@@ -180,8 +180,11 @@ class PaymentProcessor:
         except Exception as exc:
             # Never leave a pending row behind: it would block this cart forever.
             if txn.status is TransactionStatus.PENDING:
-                self.txns.session.rollback()
-                self._fail(txn, txn.error_code or "internal_error", str(exc) or type(exc).__name__)
+                await self.txns.session.rollback()
+                await self.txns.session.refresh(txn)  # rollback expired it; async can't lazy-load
+                await self._fail(
+                    txn, txn.error_code or "internal_error", str(exc) or type(exc).__name__
+                )
             raise
 
     async def _pay(
@@ -195,26 +198,28 @@ class PaymentProcessor:
         try:
             cart = await self.carts.update(cart, CartChanges(buyer=request.buyer))
         except (CartError, ShopifyError) as exc:
-            self._fail(txn, "reprice_failed", str(exc))
+            await self._fail(txn, "reprice_failed", str(exc))
             raise
         if cart.status is not CartStatus.READY:
-            return self._fail_outcome(txn, cart, "not_ready", "checkout is not ready for payment")
+            return await self._fail_outcome(
+                txn, cart, "not_ready", "checkout is not ready for payment"
+            )
         txn.amount, txn.currency = cart.total, cart.currency
 
         # 3. Draft order at the agreed price.
         try:
             draft = await self._create_draft(cart, txn)
         except ShopifyError as exc:
-            self._fail(txn, "draft_order_failed", str(exc))
+            await self._fail(txn, "draft_order_failed", str(exc))
             raise
         txn.draft_order_gid = draft["id"]
         drafted_total = money(draft["totalPriceSet"]["shopMoney"]["amount"])
-        self.txns.save(
+        await self.txns.save(
             txn, "draft_order_created", draft_order=draft["id"], total=str(drafted_total)
         )
         if drafted_total != money(cart.total):
             await self._delete_draft(txn)
-            return self._fail_outcome(
+            return await self._fail_outcome(
                 txn,
                 cart,
                 "price_changed",
@@ -239,7 +244,7 @@ class PaymentProcessor:
         if not charge.succeeded:
             txn.payment_ref = charge.payment_ref
             await self._delete_draft(txn)
-            return self._fail_outcome(
+            return await self._fail_outcome(
                 txn,
                 cart,
                 charge.code or "payment_declined",
@@ -247,7 +252,7 @@ class PaymentProcessor:
                 path="payment",
             )
         txn.status, txn.payment_ref = TransactionStatus.CAPTURED, charge.payment_ref
-        self.txns.save(
+        await self.txns.save(
             txn,
             "payment_captured",
             payment_ref=charge.payment_ref,
@@ -262,7 +267,7 @@ class PaymentProcessor:
             log.error("checkout.order_failed", transaction_id=str(txn.id), error=str(exc))
             await self._refund(gateway, txn, reason=str(exc))
             await self._delete_draft(txn)
-            return self._fail_outcome(
+            return await self._fail_outcome(
                 txn,
                 cart,
                 "order_failed",
@@ -274,7 +279,7 @@ class PaymentProcessor:
         txn.status = TransactionStatus.ORDER_CREATED
         txn.order_gid, txn.order_name = order["id"], order.get("name")
         txn.order_status_url = order.get("statusPageUrl")
-        self.txns.save(
+        await self.txns.save(
             txn,
             "order_created",
             order=order["id"],
@@ -285,7 +290,7 @@ class PaymentProcessor:
         cart.status = CartStatus.COMPLETED
         cart.messages = []
         cart.updated_at = utcnow()
-        cart = self.carts.carts.save(cart)
+        cart = await self.carts.carts.save(cart)
         log.info("checkout.completed", transaction_id=str(txn.id), order=order.get("name"))
         return CheckoutOutcome(txn, cart)
 
@@ -338,18 +343,18 @@ class PaymentProcessor:
         except Exception as exc:  # noqa: BLE001 - must record, never lose, a stuck capture
             log.error("checkout.refund_failed", transaction_id=str(txn.id), error=str(exc))
             txn.error_code, txn.error_detail = "refund_failed", f"{reason}; refund failed: {exc}"
-            self.txns.save(txn, "refund_failed", error=str(exc))
+            await self.txns.save(txn, "refund_failed", error=str(exc))
             return
         txn.status = TransactionStatus.REFUNDED
-        self.txns.save(txn, "payment_refunded", payment_ref=txn.payment_ref, reason=reason)
+        await self.txns.save(txn, "payment_refunded", payment_ref=txn.payment_ref, reason=reason)
 
     # ------------------------------------------------------------------ failures
 
-    def _fail(self, txn: AgentTransaction, code: str, detail: str) -> None:
+    async def _fail(self, txn: AgentTransaction, code: str, detail: str) -> None:
         txn.status, txn.error_code, txn.error_detail = TransactionStatus.FAILED, code, detail[:1000]
-        self.txns.save(txn, "checkout_failed", code=code, detail=detail[:1000])
+        await self.txns.save(txn, "checkout_failed", code=code, detail=detail[:1000])
 
-    def _fail_outcome(
+    async def _fail_outcome(
         self,
         txn: AgentTransaction,
         cart: AgentCart,
@@ -362,14 +367,14 @@ class PaymentProcessor:
         if txn.error_code != "refund_failed":
             txn.error_code, txn.error_detail = code, message
         txn.status = status
-        self.txns.save(txn, "checkout_failed", code=code, detail=message)
+        await self.txns.save(txn, "checkout_failed", code=code, detail=message)
         if path:
             # Shown to the agent until the next change re-prices the cart.
             cart.messages = [
                 *cart.messages,
                 {"type": "error", "code": code, "content": message, "path": path},
             ]
-            cart = self.carts.carts.save(cart)
+            cart = await self.carts.carts.save(cart)
         return CheckoutOutcome(txn, cart)
 
 

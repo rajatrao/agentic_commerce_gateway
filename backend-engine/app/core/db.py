@@ -1,34 +1,53 @@
-"""Database engine, connection pooling and the request-scoped session dependency."""
+"""Async database engine, session factory and the request-scoped session dependency.
 
-from collections.abc import Iterator
-from functools import lru_cache
+The engine is created in the app lifespan and kept on `app.state.db`, so its connection pool
+belongs to the event loop that serves requests (and is disposed with it). Request handlers get
+an `AsyncSession` from `get_session`; jobs and the MCP mount open their own with
+`db.session()`. Alembic keeps using the synchronous psycopg2 URL in `migrations/env.py`.
+"""
 
-from sqlalchemy import Engine, event
-from sqlmodel import Session, create_engine
+from collections.abc import AsyncIterator
+from dataclasses import dataclass
 
-from app.core.config import get_settings
+from fastapi import Request
+from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
+from sqlmodel.ext.asyncio.session import AsyncSession
+
+from app.core.config import Settings
 
 
-@lru_cache
-def get_engine() -> Engine:
-    settings = get_settings()
-    engine = create_engine(
-        settings.database_url,
+def async_url(database_url: str) -> str:
+    """`postgresql+psycopg2://` (what Settings normalises to) -> async psycopg 3 driver."""
+    for prefix in ("postgresql+psycopg2://", "postgresql://"):
+        if database_url.startswith(prefix):
+            return "postgresql+psycopg://" + database_url.removeprefix(prefix)
+    return database_url
+
+
+@dataclass(frozen=True)
+class Database:
+    engine: AsyncEngine
+    session: async_sessionmaker[AsyncSession]
+
+    async def dispose(self) -> None:
+        await self.engine.dispose()
+
+
+def create_database(settings: Settings) -> Database:
+    engine = create_async_engine(
+        async_url(settings.database_url),
         pool_size=settings.db_pool_size,
         max_overflow=settings.db_max_overflow,
         pool_pre_ping=True,
         pool_recycle=settings.db_pool_recycle_seconds,
-        connect_args={"options": f"-csearch_path={settings.db_schema},public"},
+        connect_args={"options": f"-csearch_path={settings.db_schema},public -ctimezone=UTC"},
     )
-
-    @event.listens_for(engine, "connect")
-    def _set_timezone(dbapi_conn, _record):  # type: ignore[no-untyped-def]
-        with dbapi_conn.cursor() as cur:
-            cur.execute("SET TIME ZONE 'UTC'")
-
-    return engine
+    # expire_on_commit=False: async sessions cannot lazy-load, so objects stay readable after
+    # commit. Repositories `refresh()` explicitly where server-side values matter.
+    return Database(engine, async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False))
 
 
-def get_session() -> Iterator[Session]:
-    with Session(get_engine()) as session:
+async def get_session(request: Request) -> AsyncIterator[AsyncSession]:
+    db: Database = request.app.state.db
+    async with db.session() as session:
         yield session

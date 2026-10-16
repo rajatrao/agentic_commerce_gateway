@@ -13,12 +13,12 @@ from app.api.agent import protocol_error_response
 from app.api.mcp import mount_mcp
 from app.api.v1.router import api_router, internal_router, public_router
 from app.core.config import get_settings
-from app.core.db import get_engine
+from app.core.db import create_database
 from app.core.logging import configure_logging
+from app.jobs.audit_worker import AuditWorker
 from app.protocols.acp_adapter import AcpAdapter
 from app.protocols.base import ProtocolError
 from app.protocols.ucp_adapter import UcpAdapter
-from app.services.llm_txt_cache import LlmTxtCache
 from app.services.shopify_client import ShopifyTokenProvider
 
 ACP, UCP = AcpAdapter(), UcpAdapter()
@@ -27,19 +27,24 @@ ACP, UCP = AcpAdapter(), UcpAdapter()
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
+    app.state.db = create_database(settings)
     app.state.http_client = httpx.AsyncClient(
         timeout=settings.http_timeout_seconds,
         headers={"User-Agent": settings.http_user_agent},
         limits=httpx.Limits(max_connections=50),
     )
     app.state.shopify_tokens = ShopifyTokenProvider(app.state.http_client, settings)
-    app.state.llm_txt_cache = LlmTxtCache(settings.llm_txt_cache_seconds)
+    worker = AuditWorker(app.state.db, app.state.http_client, app.state.shopify_tokens, settings)
+    if settings.audit_worker_enabled:
+        app.state.audit_worker = worker
+        worker.start()
     try:
         async with app.state.mcp.session_manager.run():
             yield
     finally:
+        await worker.stop()
         await app.state.http_client.aclose()
-        get_engine().dispose()
+        await app.state.db.dispose()
 
 
 def create_app() -> FastAPI:
@@ -71,10 +76,10 @@ def create_app() -> FastAPI:
         return protocol_error_response(adapter, request, exc)
 
     @app.get("/health", tags=["ops"])
-    def health(response: Response) -> dict[str, str]:
+    async def health(request: Request, response: Response) -> dict[str, str]:
         try:
-            with get_engine().connect() as conn:
-                conn.execute(text("SELECT 1"))
+            async with request.app.state.db.engine.connect() as conn:
+                await conn.execute(text("SELECT 1"))
         except Exception:  # noqa: BLE001
             response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
             return {"status": "degraded", "database": "unreachable"}

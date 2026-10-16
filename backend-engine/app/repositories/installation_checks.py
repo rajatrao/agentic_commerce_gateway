@@ -1,16 +1,19 @@
 import uuid
 
-from sqlmodel import Session, col, select
+from sqlmodel import col, select
+from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.models import InstallationCheck
 from app.services.installation_checker import InstallationReport
 
 
 class InstallationCheckRepository:
-    def __init__(self, session: Session) -> None:
+    def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    def save_report(self, merchant_id: uuid.UUID, report: InstallationReport) -> InstallationCheck:
+    async def save_report(
+        self, merchant_id: uuid.UUID, report: InstallationReport
+    ) -> InstallationCheck:
         data = report.to_dict()
         row = InstallationCheck(
             merchant_id=merchant_id,
@@ -35,14 +38,16 @@ class InstallationCheckRepository:
             },
         )
         self.session.add(row)
-        self.session.commit()
-        self.session.refresh(row)
+        await self.session.commit()
+        await self.session.refresh(row)
         return row
 
-    def latest(self, merchant_id: uuid.UUID) -> InstallationCheck | None:
-        return self.session.exec(
-            select(InstallationCheck)
-            .where(InstallationCheck.merchant_id == merchant_id)
-            .order_by(col(InstallationCheck.checked_at).desc())
-            .limit(1)
+    async def latest(self, merchant_id: uuid.UUID) -> InstallationCheck | None:
+        return (
+            await self.session.exec(
+                select(InstallationCheck)
+                .where(InstallationCheck.merchant_id == merchant_id)
+                .order_by(col(InstallationCheck.checked_at).desc())
+                .limit(1)
+            )
         ).first()

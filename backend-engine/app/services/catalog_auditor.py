@@ -21,10 +21,11 @@ from __future__ import annotations
 
 import hashlib
 import html
+import inspect
 import json
 import re
 from collections import Counter
-from collections.abc import AsyncIterable, Callable
+from collections.abc import AsyncIterable, Awaitable, Callable
 from dataclasses import dataclass, field
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
@@ -335,7 +336,7 @@ class CatalogAuditor:
     async def run(
         self,
         products: AsyncIterable[dict[str, Any]],
-        sink: Callable[[list[ProductScore]], None],
+        sink: Callable[[list[ProductScore]], Awaitable[None] | None],
     ) -> CatalogSummary:
         batch: list[ProductScore] = []
         all_scores: list[ProductScore] = []
@@ -344,8 +345,13 @@ class CatalogAuditor:
             batch.append(scored)
             all_scores.append(scored)
             if len(batch) >= self._batch_size:
-                sink(batch)
+                await _drain(sink(batch))
                 batch = []
         if batch:
-            sink(batch)
+            await _drain(sink(batch))
         return summarize(all_scores)
+
+
+async def _drain(result: Awaitable[None] | None) -> None:
+    if inspect.isawaitable(result):
+        await result

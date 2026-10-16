@@ -1,20 +1,18 @@
 """Application-layer job: pull a merchant's catalog from Shopify, score it, persist the run."""
 
-import uuid
-
 import httpx
-import structlog
-from sqlmodel import Session
+from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.core.config import Settings
-from app.core.db import get_engine
-from app.models import Merchant
-from app.repositories.audits import AuditRepository
+from app.models import Merchant, MerchantStatus
+from app.repositories.audits import AuditRepository, ClaimedRun
 from app.repositories.mapping_rules import MappingRuleRepository
-from app.services.catalog_auditor import CatalogAuditor
+from app.services.catalog_auditor import CatalogAuditor, CatalogSummary
 from app.services.shopify_client import PRODUCTS_QUERY, ShopifyAdminClient, ShopifyTokenProvider
 
-log = structlog.get_logger(__name__)
+
+class PermanentAuditError(Exception):
+    """Retrying cannot help (the store is gone), so the run fails straight away."""
 
 
 def shopify_client_for(
@@ -38,32 +36,23 @@ def shopify_client_for(
 
 
 async def run_catalog_audit(
-    run_id: uuid.UUID,
-    merchant_id: uuid.UUID,
+    session: AsyncSession,
+    claim: ClaimedRun,
     http: httpx.AsyncClient,
     tokens: ShopifyTokenProvider,
     settings: Settings,
-) -> None:
-    with Session(get_engine()) as session:
-        audits = AuditRepository(session)
-        run = audits.get_run(run_id)
-        merchant = session.get(Merchant, merchant_id)
-        if run is None or merchant is None:
-            return
-        try:
-            rules = MappingRuleRepository(session).domain_rules(merchant_id)
-            client = shopify_client_for(merchant, http, tokens, settings)
-            products = client.paginate(PRODUCTS_QUERY, ["products"], {"query": "status:active"})
-            summary = await CatalogAuditor(rules).run(
-                products, lambda batch: audits.add_scores(run, batch)
-            )
-            audits.finish_run(run, summary.avg_score)
-            log.info(
-                "audit.completed",
-                shop=merchant.shop_domain,
-                products=summary.products_scanned,
-                avg_score=str(summary.avg_score),
-            )
-        except Exception:
-            log.exception("audit.failed", shop=merchant.shop_domain, run_id=str(run_id))
-            audits.fail_run(run)
+) -> CatalogSummary:
+    """One attempt at a claimed run. Every write is fenced on the claim (see `AuditRepository`),
+    so an attempt that lost its claim to another worker raises `LostClaim` instead of writing."""
+    merchant = await session.get(Merchant, claim.merchant_id)
+    if merchant is None or merchant.status is not MerchantStatus.ACTIVE:
+        raise PermanentAuditError("store is no longer installed")
+    audits = AuditRepository(session)
+    rules = await MappingRuleRepository(session).domain_rules(merchant.id)
+    client = shopify_client_for(merchant, http, tokens, settings)
+    products = client.paginate(PRODUCTS_QUERY, ["products"], {"query": "status:active"})
+    summary = await CatalogAuditor(rules).run(
+        products, lambda batch: audits.add_scores(claim, batch)
+    )
+    await audits.finish_run(claim, summary.avg_score)
+    return summary

@@ -305,7 +305,7 @@ def build_mcp_server(open_scope: ToolScopeFactory) -> MCPServer:
         """Change a cart. `lines` replaces all lines; omitted fields are kept."""
         async with open_scope(ctx) as scope, _ToolErrors():
             scope.require("checkout")
-            cart = scope.carts.get(scope.merchant_id, _cart_id(cart_id))
+            cart = await scope.carts.get(scope.merchant_id, _cart_id(cart_id))
             cart = await scope.carts.update(
                 cart,
                 CartChanges(
@@ -322,15 +322,15 @@ def build_mcp_server(open_scope: ToolScopeFactory) -> MCPServer:
         """Current state of a cart."""
         async with open_scope(ctx) as scope, _ToolErrors():
             scope.require("checkout")
-            return render_cart(scope.carts.get(scope.merchant_id, _cart_id(cart_id)))
+            return render_cart(await scope.carts.get(scope.merchant_id, _cart_id(cart_id)))
 
     @server.tool()
     async def cancel_cart(ctx: Context, cart_id: str) -> dict[str, Any]:
         """Abandon a cart."""
         async with open_scope(ctx) as scope, _ToolErrors():
             scope.require("checkout")
-            cart = scope.carts.get(scope.merchant_id, _cart_id(cart_id))
-            return render_cart(scope.carts.cancel(cart))
+            cart = await scope.carts.get(scope.merchant_id, _cart_id(cart_id))
+            return render_cart(await scope.carts.cancel(cart))
 
     @server.tool()
     async def checkout(

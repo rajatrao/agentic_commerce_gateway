@@ -74,7 +74,7 @@ def render_transaction(txn: AgentTransaction, messages: list[dict[str, Any]]) ->
 async def agent_checkout(
     request: Request, session: SessionDep, settings: SettingsDep, tokens: TokenProviderDep
 ) -> JSONResponse:
-    h = CheckoutHandler(acp, request, session, settings, tokens, any_protocol=True)
+    h = await CheckoutHandler.create(acp, request, session, settings, tokens, any_protocol=True)
     body = await h.body()
 
     async def op() -> Rendered:

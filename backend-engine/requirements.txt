@@ -47,6 +47,8 @@ extruct==0.18.0
     # via backend-engine
 fastapi==0.143.1
     # via backend-engine
+greenlet==3.5.6
+    # via sqlalchemy
 h11==0.16.0
     # via
     #   httpcore
@@ -106,6 +108,10 @@ opentelemetry-api==1.45.1
     # via
     #   fastapi
     #   mcp
+psycopg==3.3.6
+    # via backend-engine
+psycopg-binary==3.3.6 ; implementation_name != 'pypy'
+    # via psycopg
 psycopg2-binary==2.9.13
     # via backend-engine
 pyactiveresource==2.2.2
@@ -173,6 +179,7 @@ soupsieve==3.0.3
 sqlalchemy==2.1.4
     # via
     #   alembic
+    #   backend-engine
     #   sqlmodel
 sqlmodel==0.0.48
     # via backend-engine
@@ -203,6 +210,7 @@ typing-extensions==4.16.0
     #   mcp
     #   mcp-types
     #   opentelemetry-api
+    #   psycopg
     #   pydantic
     #   pydantic-core
     #   pydantic-settings
@@ -218,6 +226,8 @@ typing-inspection==0.4.4
     #   mcp
     #   pydantic
     #   pydantic-settings
+tzdata==2026.5 ; sys_platform == 'win32'
+    # via psycopg
 urllib3==2.8.0
     # via requests
 uvicorn==0.54.0

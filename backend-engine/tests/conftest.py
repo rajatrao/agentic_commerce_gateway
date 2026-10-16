@@ -6,9 +6,11 @@ throwaway container is started with testcontainers (requires Docker).
 
 import os
 from collections.abc import Iterator
+from functools import lru_cache
 
 import pytest
 from cryptography.fernet import Fernet
+from sqlalchemy import Engine, create_engine
 
 from tests.keys import make_keypair
 
@@ -41,11 +43,14 @@ def app_env(database_url: str) -> Iterator[None]:
         BACKEND_JWT_PRIVATE_KEY=BACKEND_PRIVATE_PEM,
         FRONTEND_INTERNAL_URL=FRONTEND_URL,
     )
+    os.environ.update(
+        # Retry failed audits at once and poll the queue quickly, so tests do not sleep.
+        AUDIT_POLL_SECONDS="0.05",
+        AUDIT_RETRY_BACKOFF_SECONDS="0",
+    )
     from app.core.config import get_settings
-    from app.core.db import get_engine
 
     get_settings.cache_clear()
-    get_engine.cache_clear()
 
     from alembic import command
     from alembic.config import Config
@@ -57,4 +62,16 @@ def app_env(database_url: str) -> Iterator[None]:
     command.downgrade(cfg, "base")
     command.upgrade(cfg, "head")
     yield
-    get_engine().dispose()
+    sync_engine().dispose()
+
+
+@lru_cache
+def sync_engine() -> Engine:
+    """A plain synchronous engine for tests that inspect the database directly."""
+    from app.core.config import get_settings
+
+    settings = get_settings()
+    return create_engine(
+        settings.database_url,
+        connect_args={"options": f"-csearch_path={settings.db_schema},public"},
+    )

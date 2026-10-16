@@ -40,7 +40,7 @@ export interface MerchantSyncResult {
 
 export interface AuditRun {
   id: string;
-  status: "running" | "completed" | "failed";
+  status: "queued" | "running" | "completed" | "failed";
   started_at: string;
   finished_at: string | null;
   products_scanned: number;

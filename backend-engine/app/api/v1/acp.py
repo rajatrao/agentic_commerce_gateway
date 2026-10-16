@@ -12,17 +12,17 @@ router = APIRouter(prefix="/acp", tags=["acp"])
 adapter = AcpAdapter()
 
 
-def _handler(
+async def _handler(
     request: Request, session: SessionDep, settings: SettingsDep, tokens: TokenProviderDep
 ) -> CheckoutHandler:
-    return CheckoutHandler(adapter, request, session, settings, tokens)
+    return await CheckoutHandler.create(adapter, request, session, settings, tokens)
 
 
 @router.post("/checkout_sessions", status_code=201, summary="Create an ACP checkout session")
 async def create_session(
     request: Request, session: SessionDep, settings: SettingsDep, tokens: TokenProviderDep
 ) -> JSONResponse:
-    h = _handler(request, session, settings, tokens)
+    h = await _handler(request, session, settings, tokens)
     body = await h.body()
 
     async def op() -> AgentCart:
@@ -45,8 +45,8 @@ async def get_session(
     settings: SettingsDep,
     tokens: TokenProviderDep,
 ) -> JSONResponse:
-    h = _handler(request, session, settings, tokens)
-    return h.respond(h.cart(session_id))
+    h = await _handler(request, session, settings, tokens)
+    return h.respond(await h.cart(session_id))
 
 
 @router.post("/checkout_sessions/{session_id}", summary="Update an ACP checkout session")
@@ -57,12 +57,12 @@ async def update_session(
     settings: SettingsDep,
     tokens: TokenProviderDep,
 ) -> JSONResponse:
-    h = _handler(request, session, settings, tokens)
+    h = await _handler(request, session, settings, tokens)
     body = await h.body()
 
     async def op() -> AgentCart:
         changes = adapter.parse_update(body)
-        return await h.carts.update(h.cart(session_id), changes)
+        return await h.carts.update(await h.cart(session_id), changes)
 
     return await h.mutate(body, op)
 
@@ -75,10 +75,10 @@ async def cancel_session(
     settings: SettingsDep,
     tokens: TokenProviderDep,
 ) -> JSONResponse:
-    h = _handler(request, session, settings, tokens)
+    h = await _handler(request, session, settings, tokens)
 
     async def op() -> AgentCart:
-        return h.cancel(h.cart(session_id))
+        return await h.cancel(await h.cart(session_id))
 
     return await h.mutate({}, op)
 
@@ -94,7 +94,7 @@ async def complete_session(
     settings: SettingsDep,
     tokens: TokenProviderDep,
 ) -> JSONResponse:
-    h = _handler(request, session, settings, tokens)
+    h = await _handler(request, session, settings, tokens)
     body = await h.body()
 
     async def op() -> Rendered:

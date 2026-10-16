@@ -74,22 +74,6 @@ def mint_backend_service_jwt(shop: str, scope: list[str], settings: Settings) ->
     )
 
 
-class ReplayCache:
-    """In-process `jti` replay guard. Swap for Redis when running more than one replica."""
-
-    def __init__(self) -> None:
-        self._seen: dict[str, datetime] = {}
-
-    def check_and_add(self, jti: str, expires_at: datetime) -> bool:
-        now = datetime.now(UTC)
-        if len(self._seen) > 10_000:
-            self._seen = {k: v for k, v in self._seen.items() if v > now}
-        if jti in self._seen:
-            return False
-        self._seen[jti] = expires_at
-        return True
-
-
 def verify_shopify_webhook_hmac(raw_body: bytes, hmac_header: str | None, secret: str) -> bool:
     if not hmac_header or not secret:
         return False

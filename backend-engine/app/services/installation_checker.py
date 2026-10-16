@@ -21,6 +21,7 @@ from enum import StrEnum
 from typing import Any
 from urllib.parse import urljoin, urlparse
 
+import anyio
 import httpx
 from bs4 import BeautifulSoup
 
@@ -414,7 +415,8 @@ class InstallationChecker:
             )
             return report
 
-        home_page = analyze_page(str(home.url), home.text)
+        # HTML + JSON-LD parsing is CPU-bound (pages up to 3 MB): keep it off the event loop.
+        home_page = await anyio.to_thread.run_sync(analyze_page, str(home.url), home.text)
         pages = [home_page]
 
         product_url = product_url or await self._first_product_url(base)
@@ -422,7 +424,9 @@ class InstallationChecker:
         if product_url:
             resp = await self._get(product_url)
             if resp is not None and resp.status_code == 200:
-                product_page = analyze_page(str(resp.url), resp.text)
+                product_page = await anyio.to_thread.run_sync(
+                    analyze_page, str(resp.url), resp.text
+                )
                 pages.append(product_page)
         if product_page is None:
             report.findings.append(

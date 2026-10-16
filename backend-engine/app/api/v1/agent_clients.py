@@ -2,6 +2,7 @@
 
 import uuid
 
+import anyio
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.api.deps import CurrentMerchant, SessionDep, require_service_scopes
@@ -29,29 +30,31 @@ def _out(client: AgentClient) -> AgentClientOut:
 
 
 @router.get("", response_model=list[AgentClientOut])
-def list_agent_clients(merchant: CurrentMerchant, session: SessionDep) -> list[AgentClientOut]:
-    return [_out(c) for c in AgentClientRepository(session).list_for(merchant.id)]
+async def list_agent_clients(
+    merchant: CurrentMerchant, session: SessionDep
+) -> list[AgentClientOut]:
+    return [_out(c) for c in await AgentClientRepository(session).list_for(merchant.id)]
 
 
 @router.post(
     "", response_model=AgentClientCreated, status_code=status.HTTP_201_CREATED, dependencies=write
 )
-def create_agent_client(
+async def create_agent_client(
     body: AgentClientIn, merchant: CurrentMerchant, session: SessionDep
 ) -> AgentClientCreated:
     repo = AgentClientRepository(session)
-    if repo.count_active(merchant.id) >= MAX_ACTIVE_KEYS:
+    if await repo.count_active(merchant.id) >= MAX_ACTIVE_KEYS:
         raise HTTPException(status.HTTP_409_CONFLICT, "too many active keys; revoke one first")
-    key = issue_key()
-    client = repo.create(
+    key = await anyio.to_thread.run_sync(issue_key)  # argon2 hashing is CPU-bound
+    client = await repo.create(
         merchant.id, body.name, AgentProtocol(body.protocol), sorted(set(body.scopes)), key
     )
     return AgentClientCreated(**_out(client).model_dump(), api_key=key.plaintext)
 
 
 @router.delete("/{client_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=write)
-def revoke_agent_client(
+async def revoke_agent_client(
     client_id: uuid.UUID, merchant: CurrentMerchant, session: SessionDep
 ) -> None:
-    if AgentClientRepository(session).revoke(merchant.id, client_id) is None:
+    if await AgentClientRepository(session).revoke(merchant.id, client_id) is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "agent client not found")

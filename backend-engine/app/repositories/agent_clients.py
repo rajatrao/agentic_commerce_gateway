@@ -6,8 +6,10 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any
 
+import anyio
 from sqlalchemy.exc import IntegrityError
-from sqlmodel import Session, col, select
+from sqlmodel import col, select
+from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.models import AgentClient, AgentProtocol, IdempotencyRecord, Merchant, MerchantStatus
 from app.models.base import utcnow
@@ -23,20 +25,22 @@ class AgentPrincipal:
 
 
 class AgentClientRepository:
-    def __init__(self, session: Session) -> None:
+    def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    def list_for(self, merchant_id: uuid.UUID) -> Sequence[AgentClient]:
-        return self.session.exec(
-            select(AgentClient)
-            .where(AgentClient.merchant_id == merchant_id)
-            .order_by(col(AgentClient.created_at).desc())
+    async def list_for(self, merchant_id: uuid.UUID) -> Sequence[AgentClient]:
+        return (
+            await self.session.exec(
+                select(AgentClient)
+                .where(AgentClient.merchant_id == merchant_id)
+                .order_by(col(AgentClient.created_at).desc())
+            )
         ).all()
 
-    def count_active(self, merchant_id: uuid.UUID) -> int:
-        return len([c for c in self.list_for(merchant_id) if c.revoked_at is None])
+    async def count_active(self, merchant_id: uuid.UUID) -> int:
+        return len([c for c in await self.list_for(merchant_id) if c.revoked_at is None])
 
-    def create(
+    async def create(
         self,
         merchant_id: uuid.UUID,
         name: str,
@@ -53,37 +57,44 @@ class AgentClientRepository:
             key_hash=key.hash,
         )
         self.session.add(client)
-        self.session.commit()
-        self.session.refresh(client)
+        await self.session.commit()
+        await self.session.refresh(client)
         return client
 
-    def revoke(self, merchant_id: uuid.UUID, client_id: uuid.UUID) -> AgentClient | None:
-        client = self.session.get(AgentClient, client_id)
+    async def revoke(self, merchant_id: uuid.UUID, client_id: uuid.UUID) -> AgentClient | None:
+        client = await self.session.get(AgentClient, client_id)
         if client is None or client.merchant_id != merchant_id:
             return None
         if client.revoked_at is None:
             client.revoked_at = utcnow()
             self.session.add(client)
-            self.session.commit()
+            await self.session.commit()
         return client
 
-    def authenticate(self, plaintext: str, verifier: KeyVerifier) -> AgentPrincipal | None:
+    async def authenticate(self, plaintext: str, verifier: KeyVerifier) -> AgentPrincipal | None:
         """Resolve an agent API key to its active client and installed merchant."""
         prefix = key_prefix(plaintext)
         if prefix is None:
             return None
-        row = self.session.exec(
-            select(AgentClient, Merchant)
-            .join(Merchant, col(Merchant.id) == col(AgentClient.merchant_id))
-            .where(AgentClient.key_prefix == prefix)
+        row = (
+            await self.session.exec(
+                select(AgentClient, Merchant)
+                .join(Merchant, col(Merchant.id) == col(AgentClient.merchant_id))
+                .where(AgentClient.key_prefix == prefix)
+            )
         ).first()
         if row is None:
             return None
         client, merchant = row
         if client.revoked_at is not None or merchant.status is not MerchantStatus.ACTIVE:
             return None
-        if not verifier.verify(plaintext, client.key_hash):
+        # argon2 is deliberately slow (tens of ms of CPU): keep it off the event loop.
+        if not await anyio.to_thread.run_sync(verifier.verify, plaintext, client.key_hash):
             return None
+        # Detach both rows so a later rollback in this session (idempotency release, failed
+        # checkout) cannot expire them; async sessions cannot lazy-reload attributes.
+        self.session.expunge(client)
+        self.session.expunge(merchant)
         return AgentPrincipal(client=client, merchant=merchant)
 
 
@@ -99,30 +110,32 @@ class IdempotencyConflict(Exception):
 
 
 class IdempotencyRepository:
-    def __init__(self, session: Session) -> None:
+    def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    def begin(self, client_id: uuid.UUID, key: str, request_hash: str) -> IdempotencyRecord | None:
+    async def begin(
+        self, client_id: uuid.UUID, key: str, request_hash: str
+    ) -> IdempotencyRecord | None:
         """Claim the key. Returns the stored record to replay, or None when the caller should run.
 
         Raises IdempotencyConflict when the key was used for a different request, or the first
         request with this key is still running.
         """
-        existing = self._get(client_id, key)
+        existing = await self._get(client_id, key)
         if existing is not None and existing.created_at < utcnow() - IDEMPOTENCY_TTL:
-            self.session.delete(existing)
-            self.session.commit()
+            await self.session.delete(existing)
+            await self.session.commit()
             existing = None
         if existing is None:
             self.session.add(
                 IdempotencyRecord(agent_client_id=client_id, key=key, request_hash=request_hash)
             )
             try:
-                self.session.commit()
+                await self.session.commit()
                 return None
             except IntegrityError:
-                self.session.rollback()
-                existing = self._get(client_id, key)
+                await self.session.rollback()
+                existing = await self._get(client_id, key)
                 if existing is None:
                     raise IdempotencyConflict("in_progress") from None
         if existing.request_hash != request_hash:
@@ -131,25 +144,29 @@ class IdempotencyRepository:
             raise IdempotencyConflict("in_progress")
         return existing
 
-    def finish(self, client_id: uuid.UUID, key: str, status: int, body: dict[str, Any]) -> None:
-        record = self._get(client_id, key)
+    async def finish(
+        self, client_id: uuid.UUID, key: str, status: int, body: dict[str, Any]
+    ) -> None:
+        record = await self._get(client_id, key)
         if record is not None:
             record.status_code = status
             record.response_body = body
             self.session.add(record)
-            self.session.commit()
+            await self.session.commit()
 
-    def release(self, client_id: uuid.UUID, key: str) -> None:
+    async def release(self, client_id: uuid.UUID, key: str) -> None:
         """Forget a claim whose request failed unexpectedly, so the agent can retry."""
-        self.session.rollback()
-        record = self._get(client_id, key)
+        await self.session.rollback()
+        record = await self._get(client_id, key)
         if record is not None and record.status_code is None:
-            self.session.delete(record)
-            self.session.commit()
+            await self.session.delete(record)
+            await self.session.commit()
 
-    def _get(self, client_id: uuid.UUID, key: str) -> IdempotencyRecord | None:
-        return self.session.exec(
-            select(IdempotencyRecord).where(
-                IdempotencyRecord.agent_client_id == client_id, IdempotencyRecord.key == key
+    async def _get(self, client_id: uuid.UUID, key: str) -> IdempotencyRecord | None:
+        return (
+            await self.session.exec(
+                select(IdempotencyRecord).where(
+                    IdempotencyRecord.agent_client_id == client_id, IdempotencyRecord.key == key
+                )
             )
         ).first()

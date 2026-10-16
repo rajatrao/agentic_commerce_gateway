@@ -82,7 +82,9 @@ export default function Dashboard() {
   const revalidator = useRevalidator();
   const shopify = useAppBridge();
 
-  const auditRunning = summary?.run?.status === "running";
+  // Queued runs wait for a backend worker; treat them as in progress too.
+  const auditRunning =
+    summary?.run?.status === "queued" || summary?.run?.status === "running";
   const busyIntent =
     fetcher.state !== "idle" ? fetcher.formData?.get("intent") : null;
   const error = fetcher.data?.error ?? backendError;

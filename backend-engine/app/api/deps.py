@@ -1,23 +1,22 @@
 """FastAPI dependencies for authentication and shared resources."""
 
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Annotated
 
 import httpx
 from fastapi import Depends, Header, HTTPException, Request, status
-from sqlmodel import Session
+from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.core.config import Settings, get_settings
 from app.core.db import get_session
-from app.core.security import AuthError, ReplayCache, ServiceClaims, verify_service_jwt
+from app.core.security import AuthError, ServiceClaims, verify_service_jwt
 from app.models import Merchant
 from app.repositories.merchants import MerchantRepository
+from app.repositories.shared_state import ReplayGuard
 from app.services.shopify_client import ShopifyTokenProvider
 
 SettingsDep = Annotated[Settings, Depends(get_settings)]
-SessionDep = Annotated[Session, Depends(get_session)]
-
-_replay_cache = ReplayCache()
+SessionDep = Annotated[AsyncSession, Depends(get_session)]
 
 
 def _bearer(authorization: str | None) -> str:
@@ -26,8 +25,9 @@ def _bearer(authorization: str | None) -> str:
     return authorization.split(" ", 1)[1].strip()
 
 
-def service_claims(
+async def service_claims(
     settings: SettingsDep,
+    session: SessionDep,
     authorization: Annotated[str | None, Header()] = None,
 ) -> ServiceClaims:
     """Verify the frontend-ui service JWT once per request (FastAPI caches this dependency)."""
@@ -35,15 +35,18 @@ def service_claims(
         claims = verify_service_jwt(_bearer(authorization), settings)
     except AuthError as exc:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, str(exc)) from exc
-    if not _replay_cache.check_and_add(claims.jti, claims.expires_at):
+    # The replay guard lives in Postgres so a token is accepted once across all replicas.
+    if not await ReplayGuard(session).claim(claims.jti, claims.expires_at):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "token replayed")
     return claims
 
 
-def require_service_scopes(*required: str) -> Callable[..., ServiceClaims]:
+def require_service_scopes(*required: str) -> Callable[..., Awaitable[ServiceClaims]]:
     """Require the given scopes on the request's service JWT."""
 
-    def dependency(claims: Annotated[ServiceClaims, Depends(service_claims)]) -> ServiceClaims:
+    async def dependency(
+        claims: Annotated[ServiceClaims, Depends(service_claims)],
+    ) -> ServiceClaims:
         missing = set(required) - claims.scopes
         if missing:
             raise HTTPException(status.HTTP_403_FORBIDDEN, f"missing scopes: {sorted(missing)}")
@@ -52,11 +55,11 @@ def require_service_scopes(*required: str) -> Callable[..., ServiceClaims]:
     return dependency
 
 
-def current_merchant(
+async def current_merchant(
     session: SessionDep,
     claims: Annotated[ServiceClaims, Depends(require_service_scopes("merchant:read"))],
 ) -> Merchant:
-    merchant = MerchantRepository(session).get_active_by_shop(claims.shop)
+    merchant = await MerchantRepository(session).get_active_by_shop(claims.shop)
     if merchant is None:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "merchant not installed")
     return merchant

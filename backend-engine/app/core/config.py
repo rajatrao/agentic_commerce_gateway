@@ -48,6 +48,16 @@ class Settings(BaseSettings):
     llm_txt_cache_seconds: int = 600
     llm_txt_max_products: int = 2000
 
+    # Catalog audit worker (Postgres job queue over audit_runs; see app/jobs/audit_worker.py).
+    audit_worker_enabled: bool = True
+    audit_poll_seconds: float = 5.0
+    audit_heartbeat_seconds: float = 15.0
+    # A running audit whose heartbeat is older than this is assumed dead and claimed again.
+    audit_stale_seconds: float = 120.0
+    audit_max_attempts: int = 3
+    # Retry n waits n * this many seconds.
+    audit_retry_backoff_seconds: float = 60.0
+
     # Stripe: the platform secret key. Charges go to a merchant's connected account when one is
     # set on the merchant (settings.stripe_account_id), otherwise to this account.
     stripe_secret_key: str = ""

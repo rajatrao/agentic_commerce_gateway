@@ -8,7 +8,7 @@ A Shopify app that makes a merchant's catalog discoverable and purchasable by AI
 | [`backend-engine/`](backend-engine) | Python 3.12, FastAPI, SQLModel, Alembic | Business logic, protocol adapters (UCP/ACP/MCP), webhooks, payments |
 | `infra/`, `docker-compose*.yml` | Docker, Postgres 16 | Local stack and production smoke tests |
 
-Both services share one Postgres database. Prisma owns the `shopify_app` schema (Shopify sessions only); Alembic owns the `gateway` schema (all domain tables). frontend-ui never reads `gateway` tables directly: it calls backend-engine with a 60-second Ed25519-signed service JWT. See [docs/architecture.md](docs/architecture.md) for the full blueprint.
+Both services share one Postgres database. Prisma owns the `shopify_app` schema (Shopify sessions only); Alembic owns the `gateway` schema (all domain tables). frontend-ui never reads `gateway` tables directly: it calls backend-engine with a 60-second Ed25519-signed service JWT. See [docs/architecture.md](docs/architecture.md) for the full blueprint. For the end-to-end flow from install to a paid agent order, see [docs/flow.md](docs/flow.md).
 
 ## Status
 

@@ -63,6 +63,7 @@ async def test_document_structure() -> None:
     assert "### Summit Shell Jacket" in doc
     assert "- URL: https://acme.example/products/mug" in doc  # falls back to handle URL
     assert doc.index("## Collections") < doc.index("## Products")
+    assert "Each variant id below is the line item id" in doc
 
 
 def test_product_block_is_dense() -> None:
@@ -73,6 +74,31 @@ def test_product_block_is_dense() -> None:
     assert "- Availability: In stock" in block
     assert "- Options: Size: S, M, L" in block
     assert "<p>" not in block
+
+
+def test_variant_ids_are_listed_for_carts() -> None:
+    p = copy.deepcopy(PRODUCTS["complete"])
+    p["variants"]["nodes"][2]["availableForSale"] = False
+    block = render_product(p, "https://acme.example")
+    assert "- Variants (id: option, price, stock):" in block
+    assert "  - 1: S, 249.00 USD, in stock, SKU SSJ-S" in block
+    assert "  - 3: L, 249.00 USD, out of stock, SKU SSJ-L" in block
+    single = render_product(copy.deepcopy(PRODUCTS["sparse"]), "https://x")
+    assert "- Variant id: 9" in single
+    assert "Variants (" not in single
+
+
+def test_variant_list_is_capped() -> None:
+    p = copy.deepcopy(PRODUCTS["complete"])
+    base = p["variants"]["nodes"][0]
+    p["variants"]["nodes"] = [
+        {**base, "id": f"gid://shopify/ProductVariant/{n}", "title": f"V{n}", "sku": ""}
+        for n in range(1, 31)
+    ]
+    block = render_product(p, "https://x")
+    assert "  - 25: V25, 249.00 USD, in stock" in block
+    assert "  - 26:" not in block
+    assert "  - +5 more variants" in block
 
 
 def test_default_title_option_hidden_and_mapping_attributes_shown() -> None:

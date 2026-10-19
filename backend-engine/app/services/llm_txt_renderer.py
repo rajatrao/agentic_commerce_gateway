@@ -16,6 +16,7 @@ from app.services.tag_mapper import MappingRule, apply_rules
 
 PRODUCT_DESCRIPTION_CHARS = 400
 COLLECTION_DESCRIPTION_CHARS = 160
+MAX_LISTED_VARIANTS = 25
 POLICY_TITLES = {
     "REFUND_POLICY": "Refund policy",
     "SHIPPING_POLICY": "Shipping policy",
@@ -44,6 +45,31 @@ def _money(amount: Any) -> str:
     except (InvalidOperation, ValueError):
         return str(amount)
     return f"{value:.2f}"
+
+
+def _variant_id(gid: Any) -> str:
+    return str(gid or "").rsplit("/", 1)[-1]
+
+
+def _variant_lines(variants: list[dict[str, Any]], currency: str) -> list[str]:
+    """One line per variant, keyed by the numeric id agents pass as a cart line item id."""
+    listed = [v for v in variants if v.get("id")]
+    if not listed:
+        return []
+    if len(listed) == 1 and listed[0].get("title") in (None, "", "Default Title"):
+        return [f"- Variant id: {_variant_id(listed[0]['id'])}"]
+    lines = ["- Variants (id: option, price, stock):"]
+    for variant in listed[:MAX_LISTED_VARIANTS]:
+        parts = [_one_line(variant.get("title")) or "Default"]
+        if variant.get("price") is not None:
+            parts.append(f"{_money(variant['price'])} {currency}".rstrip())
+        parts.append("in stock" if variant.get("availableForSale") else "out of stock")
+        if variant.get("sku"):
+            parts.append(f"SKU {variant['sku']}")
+        lines.append(f"  - {_variant_id(variant['id'])}: {', '.join(parts)}")
+    if len(listed) > MAX_LISTED_VARIANTS:
+        lines.append(f"  - +{len(listed) - MAX_LISTED_VARIANTS} more variants")
+    return lines
 
 
 def _store_url(shop: dict[str, Any]) -> str:
@@ -122,6 +148,7 @@ def render_product(
     if variants:
         in_stock = any(v.get("availableForSale") for v in variants)
         lines.append(f"- Availability: {'In stock' if in_stock else 'Out of stock'}")
+        lines += _variant_lines(variants, currency)
 
     options = [
         f"{o['name']}: {', '.join(o.get('values') or [])}"
@@ -166,6 +193,10 @@ async def render_llm_txt(
         yield "\n"
 
     yield "## Products\n\n"
+    yield (
+        "Each variant id below is the line item id for an ACP, UCP or MCP checkout "
+        "(numeric or as gid://shopify/ProductVariant/<id>).\n\n"
+    )
     count = 0
     async for product in products:
         if product.get("status") not in (None, "ACTIVE"):

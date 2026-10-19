@@ -5,10 +5,11 @@ from typing import Any
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
-from app.api.agent import CheckoutHandler, Rendered
+from app.api.agent import CheckoutHandler
 from app.api.deps import SessionDep, SettingsDep, TokenProviderDep
 from app.models import AgentCart
-from app.protocols.ucp_adapter import UCP_VERSION, UcpAdapter, envelope, payment_handlers
+from app.protocols.base import handoff_error
+from app.protocols.ucp_adapter import UCP_VERSION, UcpAdapter, envelope
 
 router = APIRouter(prefix="/ucp", tags=["ucp"])
 discovery_router = APIRouter(tags=["ucp"])
@@ -29,7 +30,8 @@ def ucp_profile(request: Request, settings: SettingsDep) -> dict[str, Any]:
             }
         ]
     }
-    profile["payment_handlers"] = payment_handlers()
+    # No payment handlers: buyers pay on the merchant's Shopify checkout (continue_url).
+    profile["payment_handlers"] = {}
     return {"ucp": profile}
 
 
@@ -105,7 +107,8 @@ async def cancel_session(
 
 @router.post(
     "/checkout-sessions/{session_id}/complete",
-    summary="Pay with a delegated payment token and create the order",
+    summary="Not offered: the buyer pays on the store's Shopify checkout (continue_url)",
+    status_code=409,
 )
 async def complete_session(
     session_id: str,
@@ -115,10 +118,4 @@ async def complete_session(
     tokens: TokenProviderDep,
 ) -> JSONResponse:
     h = await _handler(request, session, settings, tokens)
-    body = await h.body()
-
-    async def op() -> Rendered:
-        outcome = await h.checkout(session_id, adapter.parse_complete(body))
-        return Rendered(200, adapter.render_completion(outcome.cart, outcome.transaction))
-
-    return await h.mutate(body, op)
+    raise handoff_error(await h.cart(session_id))

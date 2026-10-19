@@ -1,6 +1,7 @@
 import uuid
 from datetime import timedelta
 from decimal import Decimal
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
@@ -44,7 +45,7 @@ def shopify() -> FakeShopify:
 
 @pytest.fixture
 def manager(shopify: FakeShopify) -> CartManager:
-    return CartManager(MemoryCarts(), shopify)  # type: ignore[arg-type]
+    return CartManager(MemoryCarts(), shopify, "acme.myshopify.com")  # type: ignore[arg-type]
 
 
 def lines(*pairs: tuple[int, int]) -> list[LineInput]:
@@ -87,11 +88,35 @@ async def test_complete_cart_is_priced_by_shopify_and_ready(manager: CartManager
     assert cart.expires_at is not None and cart.expires_at > utcnow()
 
 
-async def test_missing_buyer_and_address_keep_cart_open(manager: CartManager) -> None:
+async def test_buyer_and_address_are_optional(manager: CartManager) -> None:
+    # The buyer fills them in on Shopify's checkout; given here, they only prefill it.
     cart = await create(manager, CartChanges(lines((101, 1))))
-    assert cart.status is CartStatus.OPEN
+    assert cart.status is CartStatus.READY
     assert messages(cart) == {"buyer.email": "missing", "shipping_address": "missing"}
+    assert {m["type"] for m in cart.messages} == {"info"}
     assert cart.subtotal == Decimal("120.00") and cart.shipping == Decimal("0")
+    assert cart.checkout_url == (
+        f"https://acme.myshopify.com/cart/101:1?attributes%5B_agentic_cart_id%5D={cart.id}"
+    )
+
+
+async def test_checkout_url_prefills_buyer_and_skips_unavailable_lines(
+    manager: CartManager,
+) -> None:
+    cart = await create(manager, CartChanges(lines((101, 2), (201, 1)), BUYER, ADDRESS))
+    assert cart.status is CartStatus.OPEN and cart.checkout_url is None  # 201 is out of stock
+    cart = await manager.update(cart, CartChanges(lines((101, 2))))
+    assert cart.status is CartStatus.READY and cart.checkout_url
+    url = urlsplit(cart.checkout_url)
+    assert (url.netloc, url.path) == ("acme.myshopify.com", "/cart/101:2")
+    query = parse_qs(url.query)
+    assert query["checkout[email]"] == ["ada@example.com"]
+    assert query["checkout[shipping_address][address1]"] == [ADDRESS.address1]
+    assert query["checkout[shipping_address][country]"] == [ADDRESS.country_code]
+    assert query["attributes[_agentic_cart_id]"] == [str(cart.id)]
+
+    cart = await manager.cancel(cart)
+    assert cart.status is CartStatus.CANCELED and cart.checkout_url is None
 
 
 async def test_digital_only_cart_needs_no_address(manager: CartManager) -> None:

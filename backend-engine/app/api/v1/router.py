@@ -2,7 +2,6 @@ from fastapi import APIRouter
 
 from app.api.v1 import (
     acp,
-    agent_checkout,
     agent_clients,
     agent_gateway,
     audits,
@@ -21,7 +20,6 @@ api_router.include_router(webhooks.router)
 api_router.include_router(agent_clients.router)
 api_router.include_router(acp.router)
 api_router.include_router(ucp.router)
-api_router.include_router(agent_checkout.router)
 api_router.include_router(orders.router)
 
 internal_router = internal.router

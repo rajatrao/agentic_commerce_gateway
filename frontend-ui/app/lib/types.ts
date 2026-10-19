@@ -91,35 +91,21 @@ export interface AgentClientCreated extends AgentClient {
   api_key: string;
 }
 
-export interface AgentTransaction {
+/** A cart an agent built. Buyers pay on the store's own Shopify checkout (`checkout_url`). */
+export interface AgentCheckout {
   id: string;
   protocol: AgentProtocol;
   agent_name: string | null;
-  status:
-    | "pending"
-    | "authorized"
-    | "captured"
-    | "order_created"
-    | "failed"
-    | "refunded";
-  amount: string;
+  status: "open" | "ready" | "completed" | "canceled" | "expired";
+  item_count: number;
+  total: string;
   currency: string;
-  payment_ref: string | null;
-  order_gid: string | null;
-  order_name: string | null;
-  admin_url: string | null;
-  error_code: string | null;
-  error_detail: string | null;
+  checkout_url: string | null;
   created_at: string;
+  updated_at: string;
 }
 
-export interface TransactionPage {
+export interface AgentCheckoutPage {
   total: number;
-  items: AgentTransaction[];
-}
-
-export interface PaymentSettings {
-  stripe_account_id: string | null;
-  stripe_configured: boolean;
-  test_mode: boolean;
+  items: AgentCheckout[];
 }

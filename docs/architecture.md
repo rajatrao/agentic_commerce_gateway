@@ -56,7 +56,7 @@ agentic_commerce_gateway/
 │   │   │   ├── app.installation.tsx          # Installation checker results
 │   │   │   ├── app.products.tsx              # Products needing structured-data fixes
 │   │   │   ├── app.mappings.tsx              # Meta-mapping rules CRUD
-│   │   │   ├── app.transactions.tsx          # Agentic transaction log
+│   │   │   ├── app.checkouts.tsx             # Agent carts + Shopify checkout links
 │   │   │   ├── app.settings.tsx              # Protocol toggles, agent API keys
 │   │   │   ├── auth.$.tsx / auth.login/
 │   │   │   └── webhooks.app.uninstalled.tsx  # Thin: forwards to backend
@@ -84,8 +84,7 @@ agentic_commerce_gateway/
     │   │   ├── merchant.py
     │   │   ├── audit.py
     │   │   ├── mapping.py
-    │   │   ├── cart.py
-    │   │   └── transaction.py
+    │   │   └── transaction.py        # agent carts (no payment records)
     │   ├── schemas/              # Pydantic request/response DTOs (no ORM)
     │   ├── repositories/         # DB access only; services never touch the Session directly
     │   ├── services/             # Pure business logic, no FastAPI imports
@@ -95,7 +94,6 @@ agentic_commerce_gateway/
     │   │   ├── tag_mapper.py             # Applies meta-mapping rules
     │   │   ├── inventory_tracker.py
     │   │   ├── cart_manager.py           # Phase 3
-    │   │   ├── payment_processor.py      # Phase 4
     │   │   └── shopify_client.py         # GraphQL Admin API wrapper (httpx + retries)
     │   ├── protocols/            # Translation layer: wire format <-> domain models
     │   │   ├── base.py           # ProtocolAdapter ABC + canonical CheckoutIntent
@@ -174,29 +172,10 @@ The offline Admin token gets to the backend through the Remix `afterAuth` hook, 
 | id uuid PK | merchant_id FK | protocol enum(`ucp`,`acp`,`mcp`) | name | key_prefix text | key_hash text (argon2) | scopes text[] | created_at | revoked_at |
 
 **agent_carts**
-| id uuid PK | merchant_id FK | protocol | agent_client_id FK | external_session_id text | lines jsonb | buyer jsonb | shipping_address jsonb | shipping_options jsonb | shipping_rate_handle text | messages jsonb | subtotal/shipping/tax/total numeric(12,2) | currency char(3) | status enum(`open`,`ready`,`completed`,`expired`,`canceled`) | expires_at | created_at | updated_at |
+| id uuid PK | merchant_id FK | protocol | agent_client_id FK | external_session_id text | lines jsonb | buyer jsonb | shipping_address jsonb | shipping_options jsonb | shipping_rate_handle text | messages jsonb | subtotal/shipping/tax/total numeric(12,2) | currency char(3) | checkout_url text (Shopify cart permalink, set while `ready`) | status enum(`open`,`ready`,`completed` (legacy),`expired`,`canceled`) | expires_at | created_at | updated_at |
 
 **idempotency_records**: stored responses for agent `Idempotency-Key` replays (24 h)
 | id bigint PK | agent_client_id FK | key text | request_hash text | status_code int (NULL while in flight) | response_body jsonb | created_at | UNIQUE `(agent_client_id, key)` |
-
-**agent_transactions**: Agentic transaction logs
-| column | type | notes |
-|---|---|---|
-| id | uuid PK | |
-| merchant_id, cart_id | FK | |
-| agent_client_id | FK | |
-| protocol | enum | |
-| idempotency_key | text | UNIQUE `(merchant_id, idempotency_key)` |
-| status | enum(`pending`,`authorized`,`captured`,`order_created`,`failed`,`refunded`) | |
-| payment_provider | text | `stripe` |
-| payment_ref | text | provider payment-intent id. **The raw delegated token is never stored.** |
-| amount, currency | numeric, char(3) | |
-| draft_order_gid, order_gid | text | |
-| error_code, error_detail | text | |
-| created_at, updated_at | timestamptz | |
-
-**transaction_events**: append-only audit trail
-| id bigserial | transaction_id FK | event_type text | payload jsonb (redacted) | created_at |
 
 **webhook_events**: dedupe and replay
 | id bigserial | shop_domain | topic | webhook_id text UNIQUE | payload jsonb | received_at | processed_at |
@@ -224,9 +203,9 @@ There are four trust boundaries, each with its own mechanism:
    - `llm.txt` is public, with caching and rate limits.
    - ACP and UCP use a per-merchant agent API key (`Authorization: Bearer acg_live_…`, argon2-hashed in `agent_clients`), plus a required `Idempotency-Key` header. Request-signature verification is added where the protocol spec defines it.
    - MCP uses the same key, or OAuth 2.1 later per the MCP auth spec.
-   - **Delegated payment tokens**, such as Stripe Shared Payment Tokens (`spt_…`) in ACP and UCP payment-handler payloads, are used exactly once to create and confirm a PaymentIntent on the merchant's connected Stripe account. They are never logged or persisted, and only the resulting `payment_ref` is stored.
+   - **No payment credentials.** The gateway accepts none. ACP/UCP `complete` returns `409 requires_escalation` with `continue_url`, and the UCP profile lists no payment handlers.
 
-**Paid order flow (Phase 4):** lock cart + `pending` transaction → re-check stock and re-price → `draftOrderCreate` (tags `Origin: Agentic Commerce`, line items, buyer, address and shipping rate from the cart, `reserveInventoryUntil` +10 min; abort if its total differs from the quoted total) → Stripe PaymentIntent confirmed with the shared payment token for exactly that total → `draftOrderComplete`. That produces a **Paid / Unfulfilled** order, and every step writes `transaction_events`. A failure after capture refunds automatically and marks the transaction `refunded`; a failed refund leaves it `captured` with `error_code=refund_failed` for manual follow-up.
+**Checkout handoff (Phase 4):** every cart change re-checks stock and re-prices through `draftOrderCalculate` (no draft order is created). A `ready` cart gets `checkout_url`, a Shopify cart permalink (`https://<shop>/cart/<variant>:<qty>,…`) that prefills email and shipping address and carries the cart id as the `_agentic_cart_id` cart attribute. The agent hands that link to the buyer, who pays on the merchant's own Shopify checkout. That keeps the app within App Store rule 1.1.2 (no bypassing Shopify checkout or payments). Matching orders back to carts needs `read_orders` and protected customer data approval, and is a later step.
 
 ## 4. Dependencies
 
@@ -242,7 +221,7 @@ There are four trust boundaries, each with its own mechanism:
 - Shopify: **`ShopifyAPI`** (the "shopify-api-python" package), `httpx`
 - Auth/crypto: `pyjwt[crypto]`, `cryptography`, `argon2-cffi`
 - Catalog/installation checks: `extruct` (JSON-LD/microdata), `beautifulsoup4`, `lxml`
-- Protocols/payments: `mcp` (official MCP Python SDK), `stripe`
+- Protocols: `mcp` (official MCP Python SDK)
 - Resilience/ops: `tenacity`, `structlog`
 - Dev: `pytest`, `pytest-asyncio`, `testcontainers[postgres]`, `ruff`, `mypy`
 
@@ -283,10 +262,10 @@ On the DB driver: psycopg2 is sync-only. With it, DB calls run in FastAPI's thre
 - **Variables:**
   - Both services use the reference variable `DATABASE_URL=${{Postgres.DATABASE_URL}}`. Prisma appends `?schema=shopify_app`, and SQLModel sets `search_path=gateway`.
   - The frontend reaches the backend at `BACKEND_INTERNAL_URL=http://${{backend-engine.RAILWAY_PRIVATE_DOMAIN}}:${{backend-engine.PORT}}` over Railway's private network, so dashboard traffic never leaves Railway.
-  - Secrets (`SHOPIFY_API_KEY/SECRET`, `JWT_PRIVATE_KEY` frontend only, `JWT_PUBLIC_KEY` backend only, `TOKEN_ENCRYPTION_KEY`, `STRIPE_SECRET_KEY`) go in Railway service variables, never in images.
+  - Secrets (`SHOPIFY_API_KEY/SECRET`, `JWT_PRIVATE_KEY` frontend only, `JWT_PUBLIC_KEY` backend only, `TOKEN_ENCRYPTION_KEY`) go in Railway service variables, never in images.
 - **Public domains:**
   - The frontend gets a domain, which becomes `application_url` in `shopify.app.toml`.
-  - The backend also gets a public domain, because `llm.txt`, the UCP/ACP/MCP endpoints, agent checkout and Shopify webhooks must be reachable by agents and Shopify. Its `/api/v1/merchant/*` and `/internal/*` routes still require the service JWT, so being public doesn't open them.
+  - The backend also gets a public domain, because `llm.txt`, the UCP/ACP/MCP endpoints and Shopify webhooks must be reachable by agents and Shopify. Its `/api/v1/merchant/*` and `/internal/*` routes still require the service JWT, so being public doesn't open them.
 - **Deploys:** pushes to `main` auto-deploy only the service whose `watchPatterns` changed. Optionally, a PR environment on Railway for previews.
 - **CI** (`.github/workflows/ci.yml`): lint, test and `docker build` both images on every PR, so a broken Dockerfile never reaches Railway.
 
@@ -297,6 +276,6 @@ On the DB driver: psycopg2 is sync-only. With it, DB calls run in FastAPI's thre
 | 1 | Monorepo, Dockerfiles + `docker-compose` (PG, backend, frontend) + Railway `railway.json` configs, Remix app with Prisma on PG, FastAPI skeleton with pool/Alembic, service-JWT handshake, `installation_checker.py` | `/health` green; Remix dashboard calls FastAPI with a JWT; checker returns JSON-LD/app-block findings for a live URL |
 | 2 | `catalog_auditor.py` + scoring, streaming `llm.txt`, Polaris dashboard (score, checks, fix list) | Score persisted per product; `llm.txt` streams |
 | 3 | `protocols/` adapters (UCP, ACP, MCP server), `cart_manager.py` with GraphQL inventory/shipping/tax | Agent can create and price a cart via each protocol |
-| 4 | `payment_processor.py`, `POST /api/v1/agent-checkout`, idempotent Stripe + draft order flow | Test-mode checkout produces a Paid/Unfulfilled order tagged `Origin: Agentic Commerce` and a transaction log |
+| 4 | Checkout handoff: `checkout_url` cart permalinks, ACP `continue_url`, UCP `requires_escalation`, Agent checkouts page | A ready cart's link opens the store's Shopify checkout with the lines, email and address prefilled |
 
 **Where it runs:** I can write all files directly into your folder. `shopify app init`/`dev` needs Shopify CLI logged into your Partner account, so that step runs on your Mac. I'd generate the template there and fold it into `frontend-ui/`.

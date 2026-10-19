@@ -3,10 +3,11 @@
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
-from app.api.agent import CheckoutHandler, Rendered
+from app.api.agent import CheckoutHandler
 from app.api.deps import SessionDep, SettingsDep, TokenProviderDep
 from app.models import AgentCart
 from app.protocols.acp_adapter import AcpAdapter
+from app.protocols.base import handoff_error
 
 router = APIRouter(prefix="/acp", tags=["acp"])
 adapter = AcpAdapter()
@@ -85,7 +86,8 @@ async def cancel_session(
 
 @router.post(
     "/checkout_sessions/{session_id}/complete",
-    summary="Pay with a delegated payment token and create the order",
+    summary="Not offered: the buyer pays on the store's Shopify checkout (continue_url)",
+    status_code=409,
 )
 async def complete_session(
     session_id: str,
@@ -95,10 +97,4 @@ async def complete_session(
     tokens: TokenProviderDep,
 ) -> JSONResponse:
     h = await _handler(request, session, settings, tokens)
-    body = await h.body()
-
-    async def op() -> Rendered:
-        outcome = await h.checkout(session_id, adapter.parse_complete(body))
-        return Rendered(200, adapter.render_completion(outcome.cart, outcome.transaction))
-
-    return await h.mutate(body, op)
+    raise handoff_error(await h.cart(session_id))

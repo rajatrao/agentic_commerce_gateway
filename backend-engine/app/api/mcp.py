@@ -17,7 +17,7 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from app.api.agent import payment_processor, presented_key, resolve_agent
+from app.api.agent import presented_key, resolve_agent
 from app.core.config import get_settings
 from app.jobs.catalog_audit import shopify_client_for
 from app.models import AgentProtocol, Merchant, MerchantStatus
@@ -89,14 +89,12 @@ def mount_mcp(routes: list[Any], state: State) -> MCPServer:
             if merchant is None or merchant.status is not MerchantStatus.ACTIVE:
                 raise ToolError("store not available")
             client = shopify_client_for(merchant, state.http_client, state.shopify_tokens, settings)
-            carts = CartManager(CartRepository(session), client)
             yield ToolScope(
                 merchant_id=merchant.id,
                 agent_client_id=agent.client_id,
                 scopes=agent.scopes,
                 shopify=client,
-                carts=carts,
-                payments=payment_processor(session, merchant, carts, client, state, settings),
+                carts=CartManager(CartRepository(session), client, merchant.shop_domain),
             )
 
     server = build_mcp_server(open_scope)

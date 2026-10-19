@@ -12,8 +12,8 @@ include_config_on_deploy = true
 [access_scopes]
 # read_products/read_inventory: catalog audit + llm.txt (Phase 2)
 # read_themes: installation checker app-block detection
-# write_draft_orders/write_orders/read_shipping: agent checkout (Phases 3-4)
-scopes = "read_products,read_inventory,read_themes,write_draft_orders,write_orders,read_shipping"
+# write_draft_orders/read_shipping: price agent carts with draftOrderCalculate (no orders are created)
+scopes = "read_products,read_inventory,read_themes,write_draft_orders,read_shipping"
 
 [auth]
 redirect_urls = ["https://example.com/auth/callback"]

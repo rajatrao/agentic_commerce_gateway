@@ -1,11 +1,10 @@
 import { mintServiceToken, type ServiceScope } from "./jwt.server";
 import type {
   AgentClient,
+  AgentCheckoutPage,
   AgentClientCreated,
   AgentProtocol,
   AuditRun,
-  PaymentSettings,
-  TransactionPage,
   AuditSummary,
   InstallationCheck,
   MerchantSyncResult,
@@ -172,22 +171,11 @@ export const backend = {
     );
   },
 
-  transactions(shop: string, limit = 50, offset = 0) {
-    return backendRequest<TransactionPage>(
+  agentCheckouts(shop: string, limit = 50, offset = 0) {
+    return backendRequest<AgentCheckoutPage>(
       shop,
-      `/api/v1/merchant/transactions?limit=${limit}&offset=${offset}`,
+      `/api/v1/merchant/agent-checkouts?limit=${limit}&offset=${offset}`,
     );
-  },
-
-  paymentSettings(shop: string) {
-    return backendRequest<PaymentSettings>(shop, "/api/v1/merchant/payments");
-  },
-
-  savePaymentSettings(shop: string, stripeAccountId: string | null) {
-    return backendRequest<PaymentSettings>(shop, "/api/v1/merchant/payments", {
-      method: "PUT",
-      body: { stripe_account_id: stripeAccountId },
-    });
   },
 
   runInstallationCheck(shop: string, storeUrl?: string) {

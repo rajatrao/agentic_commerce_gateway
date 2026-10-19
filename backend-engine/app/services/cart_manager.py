@@ -8,10 +8,13 @@ this module owns the rules:
   a warning; unsellable lines stay in the cart flagged unavailable so the agent can see why.
 - Pricing: the cart is priced by Shopify itself through `draftOrderCalculate`, which applies the
   merchant's real shipping profiles, tax settings and markets. Nothing is computed locally except
-  the per-line share of tax. No draft order is created until checkout (Phase 4).
-- State: `open` until the cart has sellable lines, a buyer email and, when anything ships, an
-  address and a shipping rate; then `ready`. `completed` is set by checkout, `canceled` by the
-  agent, `expired` after `CART_TTL` without changes.
+  the per-line share of tax. No draft order is ever created.
+- Checkout: the buyer pays on the merchant's own Shopify checkout, never here. A `ready` cart
+  carries `checkout_url`, a Shopify cart permalink with the lines, the buyer's email and shipping
+  address prefilled, which the agent hands to the buyer.
+- State: `open` until the cart has sellable lines (and, when an address is given, Shopify ships
+  there); then `ready`. Email and address are optional: they prefill checkout and make the quoted
+  shipping and tax exact. `canceled` by the agent, `expired` after `CART_TTL` without changes.
 """
 
 from __future__ import annotations
@@ -21,6 +24,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any, Protocol
+from urllib.parse import quote, urlencode
 
 from app.models import AgentCart, AgentProtocol, CartStatus
 from app.models.base import utcnow
@@ -168,9 +172,10 @@ def _message(kind: str, code: str, content: str, path: str | None = None) -> dic
 
 
 class CartManager:
-    def __init__(self, carts: CartRepository, shopify: ShopifyQuery) -> None:
+    def __init__(self, carts: CartRepository, shopify: ShopifyQuery, shop_domain: str) -> None:
         self.carts = carts
         self.shopify = shopify
+        self.shop_domain = shop_domain
 
     async def get(self, merchant_id: uuid.UUID, cart_id: uuid.UUID) -> AgentCart:
         cart = await self.carts.get(merchant_id, cart_id)
@@ -182,6 +187,7 @@ class CartManager:
             and cart.expires_at <= utcnow()
         ):
             cart.status = CartStatus.EXPIRED
+            cart.checkout_url = None
             cart = await self.carts.save(cart)
         return cart
 
@@ -213,6 +219,7 @@ class CartManager:
         if cart.status not in (CartStatus.OPEN, CartStatus.READY):
             raise CartError("not_modifiable", f"checkout session is {cart.status.value}")
         cart.status = CartStatus.CANCELED
+        cart.checkout_url = None
         cart.updated_at = utcnow()
         return await self.carts.save(cart)
 
@@ -235,6 +242,11 @@ class CartManager:
             cart.shipping_rate_handle = changes.shipping_rate_handle
 
         await self._reprice(cart, explicit_rate=changes.shipping_rate_handle)
+        cart.checkout_url = (
+            shopify_checkout_url(self.shop_domain, cart)
+            if cart.status is CartStatus.READY
+            else None
+        )
         now = utcnow()
         cart.updated_at = now
         cart.expires_at = now + CART_TTL
@@ -289,11 +301,21 @@ class CartManager:
             messages.append(
                 _message("error", "missing", "Add at least one available item.", "lines")
             )
-        if not (cart.buyer or {}).get("email"):
-            messages.append(_message("error", "missing", "Buyer email is required.", "buyer.email"))
+        if sellable and not (cart.buyer or {}).get("email"):
+            messages.append(
+                _message(
+                    "info", "missing", "Add the buyer's email to prefill checkout.", "buyer.email"
+                )
+            )
         if ships and not cart.shipping_address:
             messages.append(
-                _message("error", "missing", "A shipping address is required.", "shipping_address")
+                _message(
+                    "info",
+                    "missing",
+                    "Shipping and taxes are finalized at checkout. Add a shipping address "
+                    "for an exact quote.",
+                    "shipping_address",
+                )
             )
         elif ships and not options:
             messages.append(
@@ -444,10 +466,44 @@ class CartManager:
             li.setdefault("total", li["subtotal"])
 
 
+# Shopify cart permalink fields for the prefilled shipping address.
+PERMALINK_ADDRESS = {
+    "first_name": "first_name",
+    "last_name": "last_name",
+    "address1": "address1",
+    "address2": "address2",
+    "city": "city",
+    "province_code": "province",
+    "country_code": "country",
+    "zip": "zip",
+    "phone": "phone",
+}
+
+
+def shopify_checkout_url(shop_domain: str, cart: AgentCart) -> str:
+    """A cart permalink that opens the store's own checkout with this cart's sellable lines.
+
+    `https://<shop>/cart/<variant>:<qty>,...` creates the cart and goes straight to checkout;
+    `checkout[...]` prefills the buyer, and the hidden `_agentic_cart_id` attribute lands on the
+    order so it can be traced back to this cart.
+    """
+    items = ",".join(
+        f"{li['variant_id'].rsplit('/', 1)[-1]}:{li['quantity']}" for li in sellable_lines(cart)
+    )
+    params: list[tuple[str, str]] = []
+    if email := (cart.buyer or {}).get("email"):
+        params.append(("checkout[email]", email))
+    for key, field in PERMALINK_ADDRESS.items():
+        if value := (cart.shipping_address or {}).get(key):
+            params.append((f"checkout[shipping_address][{field}]", str(value)))
+    params.append(("attributes[_agentic_cart_id]", str(cart.id)))
+    return f"https://{shop_domain}/cart/{quote(items, safe=':,')}?{urlencode(params)}"
+
+
 def draft_order_input(
     cart: AgentCart, lines: list[dict[str, Any]], rate_handle: str | None
 ) -> dict[str, Any]:
-    """`DraftOrderInput` for a cart: used to price it here and to create the order at checkout."""
+    """`DraftOrderInput` used only to price a cart with `draftOrderCalculate`."""
     draft: dict[str, Any] = {
         "lineItems": [{"variantId": li["variant_id"], "quantity": li["quantity"]} for li in lines]
     }

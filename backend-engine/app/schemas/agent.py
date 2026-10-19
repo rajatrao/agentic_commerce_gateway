@@ -33,31 +33,21 @@ class AgentClientCreated(AgentClientOut):
     """Shown once. Only an argon2 hash is stored."""
 
 
-class TransactionOut(BaseModel):
+class AgentCheckoutOut(BaseModel):
+    """A cart an agent built for this store. Ready carts link to the store's own checkout."""
+
     id: uuid.UUID
     protocol: str
     agent_name: str | None
     status: str
-    amount: Decimal
+    item_count: int
+    total: Decimal
     currency: str
-    payment_ref: str | None
-    order_gid: str | None
-    order_name: str | None
-    admin_url: str | None
-    error_code: str | None
-    error_detail: str | None
+    checkout_url: str | None
     created_at: datetime
+    updated_at: datetime
 
 
-class TransactionPage(BaseModel):
+class AgentCheckoutPage(BaseModel):
     total: int
-    items: list[TransactionOut]
-
-
-class PaymentSettings(BaseModel):
-    stripe_account_id: str | None = Field(default=None, pattern=r"^acct_[A-Za-z0-9]+$")
-
-
-class PaymentSettingsOut(PaymentSettings):
-    stripe_configured: bool
-    test_mode: bool
+    items: list[AgentCheckoutOut]

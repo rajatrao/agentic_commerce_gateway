@@ -45,7 +45,7 @@ export default function App() {
             <strong>Agent protocols</strong>. Serve your catalog and carts over UCP, ACP and MCP from one gateway.
           </li>
           <li>
-            <strong>Agentic checkout</strong>. Accept delegated payment tokens and create paid orders tagged by origin.
+            <strong>Agentic checkout</strong>. Agents build priced carts and hand buyers to your own Shopify checkout to pay.
           </li>
         </ul>
       </div>

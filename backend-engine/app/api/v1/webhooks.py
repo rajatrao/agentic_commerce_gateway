@@ -55,7 +55,7 @@ async def shopify_webhook(
         await MerchantRepository(session).mark_uninstalled(x_shopify_shop_domain)
     elif x_shopify_topic not in HANDLED_TOPICS:
         log.info("webhook.unhandled_topic", topic=x_shopify_topic, shop=x_shopify_shop_domain)
-    # customers/* : the gateway stores no customer PII beyond redacted transaction logs.
+    # customers/* : the gateway keeps no Shopify customer records.
 
     await events.mark_processed(x_shopify_webhook_id)
     return {"status": "ok"}

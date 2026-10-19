@@ -5,10 +5,10 @@ A Shopify app that makes a merchant's catalog discoverable and purchasable by AI
 | Path | Stack | Role |
 |---|---|---|
 | [`frontend-ui/`](frontend-ui) | React Router 7 (Shopify's Remix successor), Polaris, Prisma | Merchant OAuth, embedded admin dashboard, theme app extension |
-| [`backend-engine/`](backend-engine) | Python 3.12, FastAPI, SQLModel, Alembic | Business logic, protocol adapters (UCP/ACP/MCP), webhooks, payments |
+| [`backend-engine/`](backend-engine) | Python 3.12, FastAPI, SQLModel, Alembic | Business logic, protocol adapters (UCP/ACP/MCP), webhooks, checkout handoff |
 | `infra/`, `docker-compose*.yml` | Docker, Postgres 16 | Local stack and production smoke tests |
 
-Both services share one Postgres database. Prisma owns the `shopify_app` schema (Shopify sessions only); Alembic owns the `gateway` schema (all domain tables). frontend-ui never reads `gateway` tables directly: it calls backend-engine with a 60-second Ed25519-signed service JWT. See [docs/architecture.md](docs/architecture.md) for the full blueprint. For the end-to-end flow from install to a paid agent order, see [docs/flow.md](docs/flow.md).
+Both services share one Postgres database. Prisma owns the `shopify_app` schema (Shopify sessions only); Alembic owns the `gateway` schema (all domain tables). frontend-ui never reads `gateway` tables directly: it calls backend-engine with a 60-second Ed25519-signed service JWT. See [docs/architecture.md](docs/architecture.md) for the full blueprint. For the end-to-end flow from install to an agent sending a buyer to checkout, see [docs/flow.md](docs/flow.md).
 
 ## Status
 
@@ -17,7 +17,7 @@ Both services share one Postgres database. Prisma owns the `shopify_app` schema 
 | 1 | Monorepo, Docker, Railway config, Postgres schemas, service-JWT auth, installation checker | Done |
 | 2 | Catalog auditor + AI Discovery Score, streaming `llm.txt`, dashboard | Done |
 | 3 | UCP / ACP / MCP adapters, cart and inventory services | Done |
-| 4 | Delegated-token agent checkout, paid draft orders | Done |
+| 4 | Agent checkout handoff to the store's own Shopify checkout | Done |
 
 ## Local development
 
@@ -64,7 +64,6 @@ One Railway project, three services. Each app service has a `railway.json` (conf
    - `FRONTEND_INTERNAL_URL=http://${{frontend-ui.RAILWAY_PRIVATE_DOMAIN}}:${{frontend-ui.PORT}}`
    - `SHOPIFY_API_KEY`, `SHOPIFY_API_SECRET`
    - `PUBLIC_BASE_URL=https://<backend public domain>` (used in the UCP discovery profile)
-   - `STRIPE_SECRET_KEY` (charges agent payment tokens; merchants can route charges to their own connected account from the Agent orders page)
    - Generate a public domain: agents and Shopify must reach `llm.txt`, protocol and webhook routes.
 3. **frontend-ui**: New service from this repo, root directory `/frontend-ui`. Variables:
    - `DATABASE_URL=${{Postgres.DATABASE_URL}}?schema=shopify_app`
@@ -97,19 +96,18 @@ Merchants create an API key per agent on the **Agent access** page (one protocol
 
 ACP and UCP writes require an `Idempotency-Key` header: a retry with the same key and body replays the stored response, and the same key with a different body gets `409`.
 
-All three share [`cart_manager.py`](backend-engine/app/services/cart_manager.py): each change re-checks live stock (archived products, unsellable variants and tracked "deny" inventory; over-requests are clamped with a warning), then prices the cart through Shopify's `draftOrderCalculate`, so shipping rates and taxes come from the merchant's own settings. The cheapest rate is preselected. A cart is `ready` once it has sellable lines, a buyer email and, if anything ships, an address and rate. Carts expire after 6 hours without changes.
+All three share [`cart_manager.py`](backend-engine/app/services/cart_manager.py): each change re-checks live stock (archived products, unsellable variants and tracked "deny" inventory; over-requests are clamped with a warning), then prices the cart through Shopify's `draftOrderCalculate`, so shipping rates and taxes come from the merchant's own settings. The cheapest rate is preselected. A cart is `ready` once it has sellable lines (and, when an address is given, the store ships there). The buyer's email and address are optional: they prefill checkout and make the quoted shipping and tax exact. Carts expire after 6 hours without changes.
 
-## Agent payments and orders
+## Checkout handoff
 
-Agents pay with a Stripe **shared payment token** (`spt_…`), sent as ACP `payment_data`, a UCP `payment.instruments[].credential`, the MCP `checkout` tool, or the protocol-neutral `POST /api/v1/agent-checkout` (`{"checkout_id", "payment_data" | "payment"}`; `201` with the order, `402` when declined). [`payment_processor.py`](backend-engine/app/services/payment_processor.py) then:
+The gateway never takes payment or creates orders. Under [Shopify App Store rule 1.1.2](https://shopify.dev/docs/apps/launch/shopify-app-store/app-store-requirements), apps must not bypass Shopify checkout, so the buyer always pays on the merchant's own Shopify checkout:
 
-1. locks the cart and opens a `pending` transaction (one checkout at a time per cart, one successful payment ever);
-2. re-checks stock and re-prices through Shopify; a cart that is no longer ready is not charged;
-3. creates a draft order tagged `Origin: Agentic Commerce` that holds stock for 10 minutes, and refuses to charge if its total differs from the price the agent saw;
-4. charges exactly that total on Stripe (`payment_method_data[shared_payment_granted_token]`, preview API version `STRIPE_API_VERSION`, idempotent per transaction);
-5. completes the draft as a **Paid / Unfulfilled** order. If Shopify refuses after the charge, the payment is refunded automatically.
+1. A `ready` cart carries `checkout_url`, a [cart permalink](https://shopify.dev/docs/apps/build/checkout/create-cart-permalinks) such as `https://<store>/cart/<variant>:<qty>,…?checkout[email]=…&checkout[shipping_address][…]=…&attributes[_agentic_cart_id]=<cart id>`, with the lines, email and address prefilled.
+2. ACP returns it as `continue_url`. UCP returns status `requires_escalation` with `continue_url` and a `requires_buyer_review` message. MCP's `create_cart`, `update_cart` and `get_cart` include `checkout_url`.
+3. The agent hands the link to the buyer, who reviews and pays with Shopify Payments, Shop Pay or any gateway the store has. The order is a normal Shopify order, carrying the `_agentic_cart_id` cart attribute.
+4. ACP and UCP `complete` endpoints answer `409 requires_escalation` with the link, and the UCP profile advertises no payment handlers.
 
-Each step is appended to `transaction_events`; tokens are never stored or logged, only the PaymentIntent id. With a `sk_test_` key, Stripe test PaymentMethods such as `pm_card_visa` are also accepted, so the flow can be tried before shared payment tokens are enabled on the Stripe account. Merchants see every attempt on the **Agent orders** page.
+Merchants see every agent cart (status, items, total, checkout link) on the **Agent checkouts** page. Linking carts to the orders they became needs `read_orders` and protected customer data approval, so it is left for later.
 
 ## Service-to-service auth
 
@@ -139,8 +137,7 @@ backend-engine/
   app/api/          FastAPI routers and auth dependencies
   app/protocols/    UCP / ACP adapters and the MCP server (wire format <-> cart_manager)
   app/services/     business logic: installation_checker, catalog_auditor, tag_mapper,
-                    llm_txt_renderer, shopify_client, cart_manager, agent_keys,
-                    payment_processor, payment_gateway (Stripe)
+                    llm_txt_renderer, shopify_client, cart_manager, agent_keys
   app/jobs/         durable catalog-audit worker (Postgres job queue)
   app/repositories/ database access
   app/models/       SQLModel tables (gateway schema)

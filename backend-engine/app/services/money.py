@@ -5,7 +5,7 @@ ZERO_DECIMAL = frozenset("BIF CLP DJF GNF ISK JPY KMF KRW PYG RWF UGX VND VUV XA
 
 
 def to_minor(amount: Decimal | str, currency: str) -> int:
-    """Amounts on the wire (protocols, Stripe) are integers in the currency's minor unit."""
+    """Amounts on the wire (agent protocols) are integers in the currency's minor unit."""
     value = Decimal(str(amount))
     if currency.upper() not in ZERO_DECIMAL:
         value *= 100

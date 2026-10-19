@@ -157,6 +157,11 @@ def render_cart(cart: AgentCart) -> dict[str, Any]:
             for m in cart.messages
         ],
         "checkout_url": cart.checkout_url,
+        "order": (
+            {"id": cart.order_gid, "name": cart.order_name, "status_url": cart.order_status_url}
+            if cart.order_gid
+            else None
+        ),
         "expires_at": cart.expires_at.isoformat() if cart.expires_at else None,
     }
 

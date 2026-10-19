@@ -107,7 +107,9 @@ The gateway never takes payment or creates orders. Under [Shopify App Store rule
 3. The agent hands the link to the buyer, who reviews and pays with Shopify Payments, Shop Pay or any gateway the store has. The order is a normal Shopify order, carrying the `_agentic_cart_id` cart attribute.
 4. ACP and UCP `complete` endpoints answer `409 requires_escalation` with the link, and the UCP profile advertises no payment handlers.
 
-Merchants see every agent cart (status, items, total, checkout link) on the **Agent checkouts** page. Linking carts to the orders they became needs `read_orders` and protected customer data approval, so it is left for later.
+When the buyer pays, Shopify's `orders/create` webhook links the order back to its cart through that attribute. The cart becomes `completed`, and ACP and UCP sessions (and MCP carts) return an `order` with its id and status page. Only the order's id and name are stored, never customer details, and `customers/redact` clears the buyer details agents sent. Merchants see every agent cart (status, total, checkout link, resulting order) on the **Agent checkouts** page.
+
+`orders/create` needs the `read_orders` scope and [protected customer data access](https://shopify.dev/docs/apps/launch/protected-customer-data) (level 1, no customer fields). Request it in the Partner dashboard under **API access** before deploying the app config.
 
 ## Service-to-service auth
 

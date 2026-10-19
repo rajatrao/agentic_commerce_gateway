@@ -1,7 +1,7 @@
 """Merchant view of the carts agents built: what they hold and their link to Shopify checkout.
 
 Buyers pay on the store's own Shopify checkout, so paid orders show up in Shopify's Orders list
-like any other (with the hidden `_agentic_cart_id` cart attribute).
+like any other. The orders/create webhook links each one back to its cart.
 """
 
 from fastapi import APIRouter, Query
@@ -22,7 +22,9 @@ async def list_agent_checkouts(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ) -> AgentCheckoutPage:
-    total, rows = await CartRepository(session).list_for(merchant.id, limit=limit, offset=offset)
+    carts = CartRepository(session)
+    total, rows = await carts.list_for(merchant.id, limit=limit, offset=offset)
+    admin = f"https://admin.shopify.com/store/{merchant.shop_domain.removesuffix('.myshopify.com')}"
     client_ids = {c.agent_client_id for c in rows if c.agent_client_id}
     names = (
         {
@@ -36,6 +38,7 @@ async def list_agent_checkouts(
     )
     return AgentCheckoutPage(
         total=total,
+        ordered=await carts.count_ordered(merchant.id),
         items=[
             AgentCheckoutOut(
                 id=c.id,
@@ -48,6 +51,11 @@ async def list_agent_checkouts(
                 total=c.total,
                 currency=c.currency,
                 checkout_url=c.checkout_url,
+                order_name=c.order_name,
+                order_admin_url=(
+                    f"{admin}/orders/{c.order_gid.rsplit('/', 1)[-1]}" if c.order_gid else None
+                ),
+                ordered_at=c.ordered_at,
                 created_at=c.created_at,
                 updated_at=c.updated_at,
             )

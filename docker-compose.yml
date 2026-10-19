@@ -70,7 +70,7 @@ services:
       SHOPIFY_API_KEY: ${SHOPIFY_API_KEY:-}
       SHOPIFY_API_SECRET: ${SHOPIFY_API_SECRET:-}
       SHOPIFY_APP_URL: ${SHOPIFY_APP_URL:-http://localhost:3000}
-      SCOPES: read_products,read_inventory,read_themes,write_draft_orders,read_shipping
+      SCOPES: read_products,read_inventory,read_themes,write_draft_orders,read_shipping,read_orders
     ports:
       - "3000:3000"
     volumes:

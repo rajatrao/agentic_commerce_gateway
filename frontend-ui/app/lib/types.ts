@@ -101,11 +101,17 @@ export interface AgentCheckout {
   total: string;
   currency: string;
   checkout_url: string | null;
+  /** Set once the buyer places the order on Shopify checkout. */
+  order_name: string | null;
+  order_admin_url: string | null;
+  ordered_at: string | null;
   created_at: string;
   updated_at: string;
 }
 
 export interface AgentCheckoutPage {
   total: number;
+  /** How many agent carts became Shopify orders. */
+  ordered: number;
   items: AgentCheckout[];
 }

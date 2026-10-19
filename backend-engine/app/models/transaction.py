@@ -15,7 +15,8 @@ from app.models.merchant import AgentProtocol
 class CartStatus(StrEnum):
     OPEN = "open"
     READY = "ready"
-    # Legacy: set by the removed in-app payment flow. Buyers now pay on Shopify's checkout.
+    # The buyer placed an order on the store's Shopify checkout (linked by the orders/create
+    # webhook through the `_agentic_cart_id` cart attribute).
     COMPLETED = "completed"
     EXPIRED = "expired"
     CANCELED = "canceled"
@@ -64,6 +65,12 @@ class AgentCart(SQLModel, table=True):
     )
     # Shopify cart permalink to the merchant's own checkout, set while the cart is ready.
     checkout_url: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
+    # The Shopify order the buyer placed from this cart. First order wins if a link is reused.
+    order_gid: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
+    order_name: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
+    # Buyer-facing order status page, returned to the agent that built the cart.
+    order_status_url: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
+    ordered_at: datetime | None = Field(default=None, sa_column=tz_column(nullable=True))
     expires_at: datetime | None = Field(default=None, sa_column=tz_column(nullable=True))
     created_at: datetime = Field(default_factory=utcnow, sa_column=tz_column())
     updated_at: datetime = Field(default_factory=utcnow, sa_column=tz_column())

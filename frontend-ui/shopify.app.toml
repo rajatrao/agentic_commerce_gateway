@@ -13,7 +13,9 @@ include_config_on_deploy = true
 # read_products/read_inventory: catalog audit + llm.txt (Phase 2)
 # read_themes: installation checker app-block detection
 # write_draft_orders/read_shipping: price agent carts with draftOrderCalculate (no orders are created)
-scopes = "read_products,read_inventory,read_themes,write_draft_orders,read_shipping"
+# read_orders: orders/create webhook links each order back to its agent cart. Needs protected
+#   customer data access (Partner dashboard > API access); only order ids are stored.
+scopes = "read_products,read_inventory,read_themes,write_draft_orders,read_shipping,read_orders"
 
 [auth]
 redirect_urls = ["https://example.com/auth/callback"]
@@ -30,6 +32,11 @@ api_version = "2026-10"
   [[webhooks.subscriptions]]
   topics = ["app/scopes_update"]
   uri = "/webhooks/app/scopes_update"
+
+  # Handled by: /app/routes/webhooks.orders.create.tsx (forwards to backend-engine)
+  [[webhooks.subscriptions]]
+  topics = ["orders/create"]
+  uri = "/webhooks/orders/create"
 
   # Mandatory GDPR compliance topics. Handled by /app/routes/webhooks.compliance.tsx
   [[webhooks.subscriptions]]

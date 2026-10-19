@@ -1,8 +1,9 @@
-"""Agentic Commerce Protocol (OpenAI + Stripe) checkout adapter.
+"""Agentic Commerce Protocol (OpenAI) checkout adapter.
 
-Implements the seller side of the Agentic Checkout spec:
+Implements the cart-building side of the Agentic Checkout spec:
 https://developers.openai.com/commerce/specs/checkout. Amounts are integers in minor units and
-`currency` is lowercase. `complete` (delegated Stripe payment token) arrives in Phase 4.
+`currency` is lowercase. Delegated payment (`complete`) is not offered: a ready session carries
+`continue_url`, the merchant's own Shopify checkout, where the buyer pays.
 """
 
 from decimal import Decimal
@@ -10,10 +11,9 @@ from typing import Any, ClassVar
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.models import AgentCart, AgentProtocol, AgentTransaction, CartStatus
+from app.models import AgentCart, AgentProtocol, CartStatus
 from app.protocols.base import (
     EMAIL_PATTERN,
-    PaymentPayload,
     ProtocolAdapter,
     ProtocolError,
     split_name,
@@ -39,11 +39,8 @@ STATUS = {
 }
 
 # ACP error codes are a closed set; map the cart's richer codes onto it.
-MESSAGE_CODES = {
-    "item_unavailable": "out_of_stock",
-    "payment_error": "payment_declined",
-}
-ACP_CODES = {"missing", "invalid", "out_of_stock", "payment_declined", "requires_3ds"}
+MESSAGE_CODES = {"item_unavailable": "out_of_stock"}
+ACP_CODES = {"missing", "invalid", "out_of_stock"}
 
 
 class _Model(BaseModel):
@@ -87,37 +84,10 @@ class UpdateCheckoutSession(_Model):
     fulfillment_option_id: str | None = None
 
 
-class AcpPaymentData(_Model):
-    token: str = Field(min_length=1, max_length=512)
-    provider: str = Field(min_length=1, max_length=32)
-    billing_address: AcpAddress | None = None
-
-
-class CompleteCheckoutSession(_Model):
-    buyer: AcpBuyer | None = None
-    payment_data: AcpPaymentData
-
-
 class AcpAdapter(ProtocolAdapter):
     protocol: ClassVar[AgentProtocol] = AgentProtocol.ACP
     create_model: ClassVar[type[BaseModel]] = CreateCheckoutSession
     update_model: ClassVar[type[BaseModel]] = UpdateCheckoutSession
-    complete_model: ClassVar[type[BaseModel]] = CompleteCheckoutSession
-
-    def _payment(self, request: BaseModel) -> PaymentPayload:
-        assert isinstance(request, CompleteCheckoutSession)
-        return PaymentPayload(
-            token=request.payment_data.token,
-            provider=request.payment_data.provider.lower(),
-            buyer=self._buyer(request.buyer),
-        )
-
-    def render_order(self, cart: AgentCart, txn: AgentTransaction) -> dict[str, Any]:
-        return {
-            "id": txn.order_gid,
-            "checkout_session_id": str(cart.id),
-            "permalink_url": txn.order_status_url,
-        }
 
     @staticmethod
     def _buyer(buyer: AcpBuyer | None) -> BuyerInput | None:
@@ -196,7 +166,6 @@ class AcpAdapter(ProtocolAdapter):
         ]
         body: dict[str, Any] = {
             "id": str(cart.id),
-            "payment_provider": {"provider": "stripe", "supported_payment_methods": ["card"]},
             "status": STATUS[cart.status],
             "currency": cur.lower(),
             "line_items": line_items,
@@ -217,6 +186,17 @@ class AcpAdapter(ProtocolAdapter):
             "messages": [self._message(m, lines) for m in cart.messages],
             "links": [],
         }
+        if cart.status is CartStatus.READY and cart.checkout_url:
+            body["continue_url"] = cart.checkout_url
+            body["messages"].append(
+                {
+                    "type": "info",
+                    "param": "$.continue_url",
+                    "content_type": "plain",
+                    "content": "The buyer pays on the store's own checkout: send them to "
+                    "continue_url.",
+                }
+            )
         if cart.shipping_rate_handle:
             body["fulfillment_option_id"] = cart.shipping_rate_handle
         if cart.buyer:
@@ -295,5 +275,4 @@ def _param(path: str | None, lines: list[dict[str, Any]]) -> str | None:
         "buyer.email": "$.buyer.email",
         "shipping_address": "$.fulfillment_address",
         "shipping_option": "$.fulfillment_option_id",
-        "payment": "$.payment_data",
     }.get(path, "$." + path)

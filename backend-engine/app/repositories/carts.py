@@ -1,6 +1,6 @@
 import uuid
 
-from sqlmodel import select
+from sqlmodel import col, func, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.models import AgentCart
@@ -24,3 +24,24 @@ class CartRepository:
         await self.session.commit()
         await self.session.refresh(cart)
         return cart
+
+    async def list_for(
+        self, merchant_id: uuid.UUID, *, limit: int, offset: int
+    ) -> tuple[int, list[AgentCart]]:
+        total = (
+            await self.session.exec(
+                select(func.count())
+                .select_from(AgentCart)
+                .where(AgentCart.merchant_id == merchant_id)
+            )
+        ).one()
+        rows = (
+            await self.session.exec(
+                select(AgentCart)
+                .where(AgentCart.merchant_id == merchant_id)
+                .order_by(col(AgentCart.created_at).desc())
+                .limit(limit)
+                .offset(offset)
+            )
+        ).all()
+        return int(total), list(rows)

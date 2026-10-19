@@ -1,10 +1,9 @@
 """Shared plumbing for agent-facing protocol routes (UCP, ACP): API-key auth, idempotency and
-protocol-shaped errors. Routers stay thin: parse with an adapter, call `CartManager` or
-`PaymentProcessor`, render."""
+protocol-shaped errors. Routers stay thin: parse with an adapter, call `CartManager`, render.
+Buyers always pay on the merchant's own Shopify checkout, so nothing here takes payments."""
 
 import uuid
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
 from json import JSONDecodeError
 from typing import Any
 
@@ -15,8 +14,8 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.core.config import Settings
 from app.jobs.catalog_audit import shopify_client_for
-from app.models import AgentCart, AgentProtocol, Merchant
-from app.protocols.base import PaymentPayload, ProtocolAdapter, ProtocolError
+from app.models import AgentCart, AgentProtocol
+from app.protocols.base import ProtocolAdapter, ProtocolError
 from app.repositories.agent_clients import (
     AgentClientRepository,
     AgentPrincipal,
@@ -25,16 +24,8 @@ from app.repositories.agent_clients import (
     request_fingerprint,
 )
 from app.repositories.carts import CartRepository
-from app.repositories.transactions import TransactionRepository
 from app.services.agent_keys import KeyVerifier
-from app.services.cart_manager import CartError, CartManager, ShopifyQuery
-from app.services.payment_gateway import PaymentGateway, StripeGateway
-from app.services.payment_processor import (
-    CheckoutError,
-    CheckoutOutcome,
-    PaymentProcessor,
-    PaymentRequest,
-)
+from app.services.cart_manager import CartError, CartManager
 from app.services.shopify_client import ShopifyAuthError, ShopifyError, ShopifyTokenProvider
 
 log = structlog.get_logger(__name__)
@@ -67,50 +58,6 @@ async def resolve_agent(
     return principal
 
 
-@dataclass(frozen=True)
-class Rendered:
-    """An operation result that is already in wire format."""
-
-    status: int
-    body: dict[str, Any]
-
-
-def payment_gateway(state: Any, settings: Settings) -> PaymentGateway:
-    """One Stripe client per process, created on first use (tests swap `state.payment_gateway`)."""
-    gateway: PaymentGateway | None = getattr(state, "payment_gateway", None)
-    if gateway is None:
-        gateway = StripeGateway(settings.stripe_secret_key, settings.stripe_api_version)
-        state.payment_gateway = gateway
-    return gateway
-
-
-def payment_processor(
-    session: AsyncSession,
-    merchant: Merchant,
-    carts: CartManager,
-    shopify: ShopifyQuery,
-    state: Any,
-    settings: Settings,
-) -> PaymentProcessor:
-    return PaymentProcessor(
-        carts,
-        TransactionRepository(session),
-        shopify,
-        lambda: payment_gateway(state, settings),
-        stripe_account=merchant.settings.get("stripe_account_id") or None,
-        reservation_minutes=settings.checkout_reservation_minutes,
-    )
-
-
-CHECKOUT_ERROR_STATUS = {
-    "not_found": 404,
-    "in_progress": 409,
-    "already_completed": 409,
-    "not_modifiable": 405,
-    "payments_not_configured": 503,
-}
-
-
 class CheckoutHandler:
     def __init__(
         self,
@@ -128,9 +75,8 @@ class CheckoutHandler:
         client = shopify_client_for(
             self.principal.merchant, request.app.state.http_client, tokens, settings
         )
-        self.carts = CartManager(CartRepository(session), client)
-        self.payments = payment_processor(
-            session, self.principal.merchant, self.carts, client, request.app.state, settings
+        self.carts = CartManager(
+            CartRepository(session), client, self.principal.merchant.shop_domain
         )
 
     @classmethod
@@ -151,23 +97,6 @@ class CheckoutHandler:
             CHECKOUT_SCOPE,
         )
         return cls(adapter, request, session, settings, tokens, principal)
-
-    async def checkout(self, cart_id: str, payment: PaymentPayload) -> CheckoutOutcome:
-        try:
-            parsed = uuid.UUID(cart_id)
-        except ValueError:
-            raise ProtocolError(404, "not_found", "checkout session not found") from None
-        return await self.payments.checkout(
-            self.merchant_id,
-            parsed,
-            PaymentRequest(
-                token=payment.token,
-                provider=payment.provider,
-                buyer=payment.buyer,
-                idempotency_key=self.request.headers.get("idempotency-key") or "",
-                agent_client_id=self.principal.client.id,
-            ),
-        )
 
     @property
     def merchant_id(self) -> uuid.UUID:
@@ -192,7 +121,7 @@ class CheckoutHandler:
     async def mutate(
         self,
         body: Any,
-        operation: Callable[[], Awaitable[AgentCart | Rendered]],
+        operation: Callable[[], Awaitable[AgentCart]],
         status: int = 200,
     ) -> JSONResponse:
         """Run a state-changing operation once per Idempotency-Key, replaying stored results."""
@@ -232,21 +161,13 @@ class CheckoutHandler:
         except Exception:
             await records.release(client_id, key)
             raise
-        if isinstance(result, Rendered):
-            status, rendered = result.status, result.body
-        else:
-            rendered = self.adapter.render(result)
+        rendered = self.adapter.render(result)
         await records.finish(client_id, key, status, rendered)
         return JSONResponse(rendered, status, headers=self._echo_headers())
 
-    async def _upstream_call(
-        self, operation: Callable[[], Awaitable[AgentCart | Rendered]]
-    ) -> AgentCart | Rendered:
+    async def _upstream_call(self, operation: Callable[[], Awaitable[AgentCart]]) -> AgentCart:
         try:
             return await operation()
-        except CheckoutError as exc:
-            status = CHECKOUT_ERROR_STATUS.get(exc.code, 400)
-            raise ProtocolError(status, exc.code, exc.message) from exc
         except CartError as exc:
             raise ProtocolError.from_cart_error(exc) from exc
         except ShopifyAuthError as exc:

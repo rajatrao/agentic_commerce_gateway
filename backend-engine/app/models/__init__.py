@@ -7,11 +7,8 @@ from app.models.merchant import AgentClient, AgentProtocol, Merchant, MerchantSt
 from app.models.shared_state import LlmTxtCacheEntry, ServiceTokenJti
 from app.models.transaction import (
     AgentCart,
-    AgentTransaction,
     CartStatus,
     IdempotencyRecord,
-    TransactionEvent,
-    TransactionStatus,
     WebhookEvent,
 )
 
@@ -20,7 +17,6 @@ __all__ = [
     "AgentCart",
     "AgentClient",
     "AgentProtocol",
-    "AgentTransaction",
     "AuditRun",
     "CartStatus",
     "IdempotencyRecord",
@@ -33,7 +29,5 @@ __all__ = [
     "ProductAudit",
     "RunStatus",
     "ServiceTokenJti",
-    "TransactionEvent",
-    "TransactionStatus",
     "WebhookEvent",
 ]

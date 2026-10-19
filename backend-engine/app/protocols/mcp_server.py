@@ -1,12 +1,12 @@
-"""Model Context Protocol server: catalog search, cart and checkout tools for MCP agents.
+"""Model Context Protocol server: catalog search and cart tools for MCP agents.
 
 Built on the official `mcp` SDK (`MCPServer`), served over streamable HTTP in stateless JSON mode
 so any replica can answer any request. Like the other adapters, this module only translates: the
 API layer supplies a `ToolScopeFactory` that authenticates the request (agent API key) and hands
-each tool call a `ToolScope` with the merchant's Shopify client and `CartManager`.
+each tool call a `ToolScope` with the merchant's Shopify client and `CartManager`. There is no
+payment tool: a ready cart's `checkout_url` opens the merchant's own Shopify checkout.
 """
 
-import hashlib
 import uuid
 from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
@@ -33,16 +33,15 @@ from app.services.cart_manager import (
     variant_gid,
 )
 from app.services.catalog_auditor import plain_text
-from app.services.payment_processor import CheckoutError, PaymentProcessor, PaymentRequest
 from app.services.shopify_client import ShopifyAuthError, ShopifyError
 
 INSTRUCTIONS = """\
 Shop this store on the buyer's behalf. Use search_products to find items, then create_cart with
-variant ids and quantities. A cart is ready for checkout when its status is "ready": it needs a
-buyer email and, for shipped items, a shipping address and a shipping option. Read `messages` on
-every cart response; they say exactly what is missing or out of stock. Prices are decimal strings
-in the cart's currency and come from the store's own shipping and tax settings. To buy, call
-checkout with a Stripe shared payment token (spt_...) for the cart's total; it returns the order."""
+variant ids and quantities. Read `messages` on every cart response; they say exactly what is
+missing or out of stock. Prices are decimal strings in the cart's currency and come from the
+store's own shipping and tax settings; add the buyer's email and shipping address for an exact
+quote and a prefilled checkout. When the cart's status is "ready", give the buyer its
+`checkout_url`: they review and pay on the store's own checkout. You never handle payment."""
 
 SEARCH_QUERY = """
 query AgentSearch($query: String!, $first: Int!) {
@@ -97,7 +96,6 @@ class ToolScope:
     scopes: frozenset[str]
     shopify: ShopifyQuery
     carts: CartManager
-    payments: PaymentProcessor
 
     def require(self, scope: str) -> None:
         if scope not in self.scopes:
@@ -158,6 +156,7 @@ def render_cart(cart: AgentCart) -> dict[str, Any]:
             {k: m[k] for k in ("type", "code", "content", "path") if m.get(k)}
             for m in cart.messages
         ],
+        "checkout_url": cart.checkout_url,
         "expires_at": cart.expires_at.isoformat() if cart.expires_at else None,
     }
 
@@ -225,7 +224,7 @@ class _ToolErrors:
         return None
 
     async def __aexit__(self, exc_type: Any, exc: BaseException | None, tb: Any) -> None:
-        if isinstance(exc, CartError | CheckoutError):
+        if isinstance(exc, CartError):
             raise ToolError(exc.message) from exc
         if isinstance(exc, ShopifyAuthError):
             raise ToolError("the store is temporarily unavailable") from exc
@@ -331,44 +330,5 @@ def build_mcp_server(open_scope: ToolScopeFactory) -> MCPServer:
             scope.require("checkout")
             cart = await scope.carts.get(scope.merchant_id, _cart_id(cart_id))
             return render_cart(await scope.carts.cancel(cart))
-
-    @server.tool()
-    async def checkout(
-        ctx: Context,
-        cart_id: str,
-        payment_token: Annotated[str, Field(description="Stripe shared payment token (spt_...)")],
-        email: Email | None = None,
-    ) -> dict[str, Any]:
-        """Pay for a ready cart and place the order. Stock and price are re-checked first; the
-        card is charged exactly the cart total. Calling again with the same token is safe."""
-        async with open_scope(ctx) as scope, _ToolErrors():
-            scope.require("checkout")
-            fingerprint = hashlib.sha256(payment_token.encode()).hexdigest()[:24]
-            outcome = await scope.payments.checkout(
-                scope.merchant_id,
-                _cart_id(cart_id),
-                PaymentRequest(
-                    token=payment_token,
-                    idempotency_key=f"mcp:{cart_id}:{fingerprint}",
-                    agent_client_id=scope.agent_client_id,
-                    buyer=BuyerInput(email=email) if email else None,
-                ),
-            )
-            txn = outcome.transaction
-            result = render_cart(outcome.cart)
-            result["payment"] = {
-                "status": txn.status.value,
-                "error": txn.error_code,
-                "order": (
-                    {
-                        "id": txn.order_gid,
-                        "name": txn.order_name,
-                        "status_url": txn.order_status_url,
-                    }
-                    if txn.order_gid
-                    else None
-                ),
-            }
-            return result
 
     return server

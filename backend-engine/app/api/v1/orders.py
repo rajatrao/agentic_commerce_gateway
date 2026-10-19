@@ -1,29 +1,29 @@
-"""Merchant view of agent orders (the transaction log) and payment settings."""
+"""Merchant view of the carts agents built: what they hold and their link to Shopify checkout.
 
-from fastapi import APIRouter, Depends, Query
-from sqlalchemy.orm.attributes import flag_modified
+Buyers pay on the store's own Shopify checkout, so paid orders show up in Shopify's Orders list
+like any other (with the hidden `_agentic_cart_id` cart attribute).
+"""
+
+from fastapi import APIRouter, Query
 from sqlmodel import col, select
 
-from app.api.deps import CurrentMerchant, SessionDep, SettingsDep, require_service_scopes
+from app.api.deps import CurrentMerchant, SessionDep
 from app.models import AgentClient
-from app.repositories.transactions import TransactionRepository
-from app.schemas.agent import PaymentSettings, PaymentSettingsOut, TransactionOut, TransactionPage
+from app.repositories.carts import CartRepository
+from app.schemas.agent import AgentCheckoutOut, AgentCheckoutPage
 
-router = APIRouter(prefix="/merchant", tags=["agent-orders"])
-write = [Depends(require_service_scopes("merchant:write"))]
+router = APIRouter(prefix="/merchant", tags=["agent-checkouts"])
 
 
-@router.get("/transactions", response_model=TransactionPage)
-async def list_transactions(
+@router.get("/agent-checkouts", response_model=AgentCheckoutPage)
+async def list_agent_checkouts(
     merchant: CurrentMerchant,
     session: SessionDep,
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
-) -> TransactionPage:
-    total, rows = await TransactionRepository(session).list_for(
-        merchant.id, limit=limit, offset=offset
-    )
-    client_ids = {t.agent_client_id for t in rows if t.agent_client_id}
+) -> AgentCheckoutPage:
+    total, rows = await CartRepository(session).list_for(merchant.id, limit=limit, offset=offset)
+    client_ids = {c.agent_client_id for c in rows if c.agent_client_id}
     names = (
         {
             c.id: c.name
@@ -34,58 +34,23 @@ async def list_transactions(
         if client_ids
         else {}
     )
-    store = merchant.shop_domain.removesuffix(".myshopify.com")
-    return TransactionPage(
+    return AgentCheckoutPage(
         total=total,
         items=[
-            TransactionOut(
-                id=t.id,
-                protocol=t.protocol.value,
-                agent_name=names.get(t.agent_client_id) if t.agent_client_id else None,
-                status=t.status.value,
-                amount=t.amount,
-                currency=t.currency,
-                payment_ref=t.payment_ref,
-                order_gid=t.order_gid,
-                order_name=t.order_name,
-                admin_url=_admin_url(store, t.order_gid),
-                error_code=t.error_code,
-                error_detail=t.error_detail,
-                created_at=t.created_at,
+            AgentCheckoutOut(
+                id=c.id,
+                protocol=c.protocol.value,
+                agent_name=names.get(c.agent_client_id) if c.agent_client_id else None,
+                status=c.status.value,
+                item_count=sum(
+                    li.get("quantity", 0) for li in c.lines if li.get("available", True)
+                ),
+                total=c.total,
+                currency=c.currency,
+                checkout_url=c.checkout_url,
+                created_at=c.created_at,
+                updated_at=c.updated_at,
             )
-            for t in rows
+            for c in rows
         ],
     )
-
-
-def _admin_url(store: str, order_gid: str | None) -> str | None:
-    if not order_gid:
-        return None
-    return f"https://admin.shopify.com/store/{store}/orders/{order_gid.rsplit('/', 1)[-1]}"
-
-
-def _payment_settings(merchant: CurrentMerchant, settings: SettingsDep) -> PaymentSettingsOut:
-    key = settings.stripe_secret_key
-    return PaymentSettingsOut(
-        stripe_account_id=merchant.settings.get("stripe_account_id"),
-        stripe_configured=bool(key),
-        test_mode=key.startswith(("sk_test_", "rk_test_")),
-    )
-
-
-@router.get("/payments", response_model=PaymentSettingsOut)
-async def get_payment_settings(
-    merchant: CurrentMerchant, settings: SettingsDep
-) -> PaymentSettingsOut:
-    return _payment_settings(merchant, settings)
-
-
-@router.put("/payments", response_model=PaymentSettingsOut, dependencies=write)
-async def put_payment_settings(
-    body: PaymentSettings, merchant: CurrentMerchant, session: SessionDep, settings: SettingsDep
-) -> PaymentSettingsOut:
-    merchant.settings = {**merchant.settings, "stripe_account_id": body.stripe_account_id}
-    flag_modified(merchant, "settings")
-    session.add(merchant)
-    await session.commit()
-    return _payment_settings(merchant, settings)

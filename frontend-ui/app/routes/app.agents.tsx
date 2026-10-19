@@ -154,8 +154,8 @@ export default function Agents() {
         <s-paragraph>
           Agents send the key as a Bearer token. UCP and ACP calls also need an
           Idempotency-Key header. Carts are priced with your own shipping rates
-          and taxes, and stock is checked live. Agents pay with Stripe shared
-          payment tokens; paid orders are listed under Agent orders.
+          and taxes, and stock is checked live. When a cart is ready, the agent
+          sends the buyer to your own Shopify checkout to pay.
         </s-paragraph>
         {baseUrl && (
           <s-unordered-list>

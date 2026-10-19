@@ -105,8 +105,15 @@ def test_acp_checkout_session_lifecycle(client: TestClient, shopify: FakeShopify
     assert resp.headers["Idempotency-Key"] == "create-1"
     session = resp.json()
     sid = session["id"]
-    assert session["status"] == "not_ready_for_payment"
-    assert {m["param"] for m in session["messages"]} == {"$.buyer.email", "$.fulfillment_address"}
+    # Items alone are enough: the buyer finishes on the store's own Shopify checkout.
+    assert session["status"] == "ready_for_payment"
+    assert session["continue_url"].startswith(f"https://{shop}/cart/101:1?")
+    assert {m["param"] for m in session["messages"]} == {
+        "$.buyer.email",
+        "$.fulfillment_address",
+        "$.continue_url",
+    }
+    assert {m["type"] for m in session["messages"]} == {"info"}
 
     resp = client.post(
         f"/api/v1/acp/checkout_sessions/{sid}",
@@ -119,6 +126,17 @@ def test_acp_checkout_session_lifecycle(client: TestClient, shopify: FakeShopify
     session = resp.json()
     assert resp.status_code == 200 and session["status"] == "ready_for_payment"
     assert session["fulfillment_option_id"] == "shopify-Standard-5.00"
+    assert "checkout%5Bemail%5D=ada%40example.com" in session["continue_url"]
+
+    # There is no delegated payment: `complete` points the agent at the store's checkout.
+    resp = client.post(
+        f"/api/v1/acp/checkout_sessions/{sid}/complete",
+        json={"payment_data": {"token": "spt_123", "provider": "stripe"}},
+        headers=agent_headers(key, "complete-1"),
+    )
+    assert resp.status_code == 409
+    assert resp.json()["code"] == "requires_escalation"
+    assert session["continue_url"] in resp.json()["message"]
 
     resp = client.post(
         f"/api/v1/acp/checkout_sessions/{sid}",
@@ -135,6 +153,7 @@ def test_acp_checkout_session_lifecycle(client: TestClient, shopify: FakeShopify
         f"/api/v1/acp/checkout_sessions/{sid}/cancel", headers=agent_headers(key, "cancel-1")
     )
     assert resp.status_code == 200 and resp.json()["status"] == "canceled"
+    assert "continue_url" not in resp.json()
     resp = client.post(
         f"/api/v1/acp/checkout_sessions/{sid}/cancel", headers=agent_headers(key, "cancel-2")
     )
@@ -236,7 +255,8 @@ def test_ucp_checkout_and_discovery(client: TestClient, shopify: FakeShopify) ->
     )
     assert resp.status_code == 201, resp.text
     checkout = resp.json()
-    assert checkout["status"] == "incomplete"
+    assert checkout["status"] == "requires_escalation"
+    assert checkout["continue_url"].startswith(f"https://{shop}/cart/101:1?")
     assert checkout["fulfillment"]["methods"][0]["destinations"] == []
 
     destination = {
@@ -255,9 +275,17 @@ def test_ucp_checkout_and_discovery(client: TestClient, shopify: FakeShopify) ->
         headers={**headers, "Idempotency-Key": "u2"},
     )
     checkout = resp.json()
-    assert checkout["status"] == "ready_for_complete"
+    assert checkout["status"] == "requires_escalation"
     assert checkout["line_items"][0]["quantity"] == 2
     assert {t["type"]: t["amount"] for t in checkout["totals"]}["total"] == 26950
+    assert checkout["continue_url"].startswith(f"https://{shop}/cart/101:2?")
+
+    resp = client.post(
+        f"/api/v1/ucp/checkout-sessions/{checkout['id']}/complete",
+        json={"payment": {"instruments": [{"credential": {"token": "spt_1"}}]}},
+        headers={**headers, "Idempotency-Key": "u-complete"},
+    )
+    assert resp.status_code == 409 and resp.json()["code"] == "requires_escalation"
 
     resp = client.put(
         f"/api/v1/ucp/checkout-sessions/{uuid.uuid4()}",
@@ -270,6 +298,7 @@ def test_ucp_checkout_and_discovery(client: TestClient, shopify: FakeShopify) ->
     service = profile["services"]["dev.ucp.shopping"][0]
     assert service["rest"]["endpoint"].endswith("/api/v1/ucp")
     assert service["mcp"]["endpoint"].endswith("/mcp")
+    assert profile["payment_handlers"] == {}
 
 
 # ----------------------------------------------------------------------------- MCP
@@ -313,7 +342,6 @@ def test_mcp_tools(client: TestClient, shopify: FakeShopify) -> None:
         "update_cart",
         "get_cart",
         "cancel_cart",
-        "checkout",
     }
 
     found = tool(client, key, "search_products", query="jacket")
@@ -334,6 +362,7 @@ def test_mcp_tools(client: TestClient, shopify: FakeShopify) -> None:
         },
     )
     assert cart["status"] == "ready", cart
+    assert cart["checkout_url"].startswith(f"https://{shop}/cart/101:1?")
     assert (cart["subtotal"], cart["shipping"], cart["tax"], cart["total"]) == (
         "120.00",
         "5.00",
@@ -361,3 +390,25 @@ def test_mcp_tools(client: TestClient, shopify: FakeShopify) -> None:
     limited = issue(client, shop, "mcp", scopes=["catalog:read"])["api_key"]
     denied = tool(client, limited, "create_cart", lines=[{"variant_id": "101", "quantity": 1}])
     assert denied["error"] and "checkout" in denied["text"]
+
+
+def test_merchant_sees_agent_checkouts(client: TestClient, shopify: FakeShopify) -> None:
+    shop = new_shop()
+    install(client, shop)
+    key = issue(client, shop, "acp")["api_key"]
+    for n, qty in enumerate((1, 3)):
+        client.post(
+            "/api/v1/acp/checkout_sessions",
+            json={"items": [{"id": "101", "quantity": qty}]},
+            headers=agent_headers(key, f"list-{n}"),
+        )
+    page = client.get("/api/v1/merchant/agent-checkouts", headers=auth(shop)).json()
+    assert page["total"] == 2
+    newest = page["items"][0]
+    assert newest["agent_name"] == "acp agent" and newest["protocol"] == "acp"
+    assert (newest["status"], newest["item_count"]) == ("ready", 3)
+    assert newest["checkout_url"].startswith(f"https://{shop}/cart/101:3?")
+    other = new_shop()
+    install(client, other)
+    page = client.get("/api/v1/merchant/agent-checkouts", headers=auth(other)).json()
+    assert page == {"total": 0, "items": []}  # each store sees only its own carts

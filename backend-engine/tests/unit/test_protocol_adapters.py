@@ -17,7 +17,7 @@ ADDRESS = AddressInput(
 
 
 async def priced_cart(protocol: AgentProtocol, *pairs: tuple[int, int], ready: bool = True):
-    manager = CartManager(MemoryCarts(), FakeShopify())  # type: ignore[arg-type]
+    manager = CartManager(MemoryCarts(), FakeShopify(), "acme.myshopify.com")  # type: ignore[arg-type]
     changes = CartChanges(
         [LineInput(f"{V}{v}", q, ref=str(v)) for v, q in pairs],
         BuyerInput(email="ada@example.com", first_name="Ada", last_name="Lovelace")
@@ -114,18 +114,22 @@ async def test_acp_render() -> None:
         "email": "ada@example.com",
     }
     assert body["fulfillment_address"]["line_one"] == "1 Main St"
-    assert body["messages"] == []
+    assert body["continue_url"].startswith("https://acme.myshopify.com/cart/101:2?")
+    assert [m["param"] for m in body["messages"]] == ["$.continue_url"]
+    assert "payment_provider" not in body
 
 
 async def test_acp_render_messages() -> None:
     cart = await priced_cart(AgentProtocol.ACP, (101, 1), (201, 1), ready=False)
     body = AcpAdapter().render(cart)
     assert body["status"] == "not_ready_for_payment"
-    by_param = {m.get("param"): m["code"] for m in body["messages"]}
+    assert "continue_url" not in body
+    by_param = {m.get("param"): (m["type"], m.get("code")) for m in body["messages"]}
     assert by_param == {
-        "$.line_items[1]": "out_of_stock",
-        "$.buyer.email": "missing",
-        "$.fulfillment_address": "missing",
+        "$.line_items[1]": ("error", "out_of_stock"),
+        # Email and address only prefill the store's checkout, so they are not required.
+        "$.buyer.email": ("info", None),
+        "$.fulfillment_address": ("info", None),
     }
 
 
@@ -175,7 +179,11 @@ async def test_ucp_render() -> None:
     body = UcpAdapter().render(cart)
     assert body["ucp"]["version"]
     assert "dev.ucp.shopping.checkout" in body["ucp"]["capabilities"]
-    assert body["status"] == "ready_for_complete"
+    # Payment happens on the store's own checkout, so a ready cart escalates to the buyer.
+    assert body["status"] == "requires_escalation"
+    assert body["continue_url"].startswith("https://acme.myshopify.com/cart/101:1,401:1?")
+    assert body["messages"][-1]["severity"] == "requires_buyer_review"
+    assert "payment" not in body
     assert body["currency"] == "USD"
     assert body["line_items"][0]["item"] == {
         "id": "101",
@@ -196,8 +204,9 @@ async def test_ucp_render_messages() -> None:
     messages = UcpAdapter().render(cart)["messages"]
     assert {(m["type"], m["code"], m.get("path")) for m in messages} == {
         ("warning", "quantity_adjusted", "$.line_items[0]"),
-        ("error", "missing", "$.buyer.email"),
-        ("error", "missing", "$.fulfillment.methods[0].destinations"),
+        ("warning", "missing", "$.buyer.email"),
+        ("warning", "missing", "$.fulfillment.methods[0].destinations"),
+        ("error", "requires_buyer_review", None),
     }
 
 

@@ -21,7 +21,7 @@ export default function App() {
         <s-link href="/app">Dashboard</s-link>
         <s-link href="/app/products">Product audit</s-link>
         <s-link href="/app/agents">Agent access</s-link>
-        <s-link href="/app/orders">Agent orders</s-link>
+        <s-link href="/app/checkouts">Agent checkouts</s-link>
       </s-app-nav>
       <Outlet />
     </AppProvider>

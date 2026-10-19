@@ -3,21 +3,23 @@
 An adapter is a pure translation layer: it validates a protocol's request body into the
 protocol-neutral `CartChanges` consumed by `services.cart_manager`, and renders an `AgentCart`
 back into that protocol's response shape. Adapters never touch the database or Shopify.
+
+Payment never happens here. A ready cart carries `checkout_url` (the merchant's own Shopify
+checkout), rendered as `continue_url`; a protocol `complete` call is answered with
+`handoff_error`, which points the agent at that URL.
 """
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
 from typing import Any, ClassVar
 
 from pydantic import BaseModel, ValidationError
 
-from app.models import AgentCart, AgentProtocol, AgentTransaction
-from app.services.cart_manager import BuyerInput, CartChanges, CartError
+from app.models import AgentCart, AgentProtocol, CartStatus
+from app.services.cart_manager import CartChanges, CartError
 from app.services.money import to_minor
 
 __all__ = [
     "EMAIL_PATTERN",
-    "PaymentPayload",
     "ProtocolAdapter",
     "ProtocolError",
     "split_name",
@@ -25,15 +27,6 @@ __all__ = [
 ]
 
 EMAIL_PATTERN = r"^[^@\s]+@[^@\s]+\.[^@\s]+$"
-
-
-@dataclass(frozen=True)
-class PaymentPayload:
-    """The delegated credential from a protocol's `complete` request."""
-
-    token: str
-    provider: str = "stripe"
-    buyer: BuyerInput | None = None
 
 
 class ProtocolError(Exception):
@@ -62,16 +55,12 @@ class ProtocolAdapter(ABC):
     protocol: ClassVar[AgentProtocol]
     create_model: ClassVar[type[BaseModel]]
     update_model: ClassVar[type[BaseModel]]
-    complete_model: ClassVar[type[BaseModel]]
 
     def parse_create(self, body: Any) -> CartChanges:
         return self._changes(self._validate(self.create_model, body))
 
     def parse_update(self, body: Any) -> CartChanges:
         return self._changes(self._validate(self.update_model, body))
-
-    def parse_complete(self, body: Any) -> PaymentPayload:
-        return self._payment(self._validate(self.complete_model, body))
 
     @staticmethod
     def _validate(model: type[BaseModel], body: Any) -> BaseModel:
@@ -84,23 +73,25 @@ class ProtocolAdapter(ABC):
     def _changes(self, request: BaseModel) -> CartChanges: ...
 
     @abstractmethod
-    def _payment(self, request: BaseModel) -> PaymentPayload: ...
-
-    @abstractmethod
     def render(self, cart: AgentCart) -> dict[str, Any]: ...
-
-    def render_completion(self, cart: AgentCart, txn: AgentTransaction | None) -> dict[str, Any]:
-        """The checkout after `complete`, with the order when payment succeeded."""
-        body = self.render(cart)
-        if txn is not None and txn.order_gid:
-            body["order"] = self.render_order(cart, txn)
-        return body
-
-    @abstractmethod
-    def render_order(self, cart: AgentCart, txn: AgentTransaction) -> dict[str, Any]: ...
 
     @abstractmethod
     def render_error(self, error: ProtocolError) -> dict[str, Any]: ...
+
+
+def handoff_error(cart: AgentCart) -> ProtocolError:
+    """The answer to `complete`: payment happens on the merchant's Shopify checkout."""
+    if cart.status is CartStatus.READY and cart.checkout_url:
+        return ProtocolError(
+            409,
+            "requires_escalation",
+            "Payment happens on the store's own checkout. Send the buyer to continue_url: "
+            f"{cart.checkout_url}",
+            "$.continue_url",
+        )
+    if cart.status is CartStatus.OPEN:
+        return ProtocolError(409, "not_ready", "checkout is not ready yet; see messages")
+    return ProtocolError(405, "not_modifiable", f"checkout session is {cart.status.value}")
 
 
 def split_name(name: str | None) -> tuple[str | None, str | None]:

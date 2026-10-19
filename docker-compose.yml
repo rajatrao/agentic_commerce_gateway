@@ -36,7 +36,6 @@ services:
       BACKEND_JWT_PRIVATE_KEY: ${BACKEND_JWT_PRIVATE_KEY:-}
       FRONTEND_INTERNAL_URL: http://frontend:3000
       PUBLIC_BASE_URL: ${BACKEND_PUBLIC_URL:-http://localhost:8000}
-      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
       TOKEN_ENCRYPTION_KEY: ${TOKEN_ENCRYPTION_KEY:-}
       SHOPIFY_API_KEY: ${SHOPIFY_API_KEY:-}
       SHOPIFY_API_SECRET: ${SHOPIFY_API_SECRET:-}
@@ -71,7 +70,7 @@ services:
       SHOPIFY_API_KEY: ${SHOPIFY_API_KEY:-}
       SHOPIFY_API_SECRET: ${SHOPIFY_API_SECRET:-}
       SHOPIFY_APP_URL: ${SHOPIFY_APP_URL:-http://localhost:3000}
-      SCOPES: read_products,read_inventory,read_themes,write_draft_orders,write_orders,read_shipping
+      SCOPES: read_products,read_inventory,read_themes,write_draft_orders,read_shipping
     ports:
       - "3000:3000"
     volumes:

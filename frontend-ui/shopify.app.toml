@@ -1,5 +1,5 @@
-# Shopify app configuration. `docker compose run --rm frontend shopify app config link` fills in
-# client_id / application_url for your Partner app (see README "Local development").
+# Shopify app configuration. Run `npm run config:link` on your machine to fill in
+# client_id / application_url for your Partner app.
 client_id = ""
 name = "Agentic Commerce Gateway"
 application_url = "https://example.com"

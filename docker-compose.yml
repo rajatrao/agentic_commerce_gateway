@@ -39,6 +39,7 @@ services:
       TOKEN_ENCRYPTION_KEY: ${TOKEN_ENCRYPTION_KEY:-}
       SHOPIFY_API_KEY: ${SHOPIFY_API_KEY:-}
       SHOPIFY_API_SECRET: ${SHOPIFY_API_SECRET:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
     ports:
       - "8000:8000"
     volumes:
@@ -70,7 +71,7 @@ services:
       SHOPIFY_API_KEY: ${SHOPIFY_API_KEY:-}
       SHOPIFY_API_SECRET: ${SHOPIFY_API_SECRET:-}
       SHOPIFY_APP_URL: ${SHOPIFY_APP_URL:-http://localhost:3000}
-      SCOPES: read_products,read_inventory,read_themes,write_draft_orders,read_shipping,read_orders
+      SCOPES: write_products,read_inventory,read_themes,write_draft_orders,read_shipping,read_orders
     ports:
       - "3000:3000"
     volumes:

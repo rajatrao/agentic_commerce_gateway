@@ -115,3 +115,293 @@ export interface AgentCheckoutPage {
   ordered: number;
   items: AgentCheckout[];
 }
+
+// ------------------------------------------------------------------ catalog intelligence
+
+export type FindingSeverity = "critical" | "high" | "medium" | "low";
+
+export interface RunPoint {
+  id: string;
+  status: AuditRun["status"];
+  started_at: string;
+  finished_at: string | null;
+  products_scanned: number;
+  avg_score: string | null;
+  avg_readiness: string | null;
+  last_error: string | null;
+}
+
+export interface EnrichmentJob {
+  id: string;
+  status: AuditRun["status"];
+  use_ai: boolean;
+  total: number;
+  succeeded: number;
+  failed: number;
+  created_at: string;
+  finished_at: string | null;
+  last_error: string | null;
+  results: Record<
+    string,
+    {
+      status: "ok" | "error";
+      title?: string;
+      suggestions: number;
+      error: string | null;
+      note?: string | null;
+    }
+  >;
+  /** Only on the single-job endpoint. */
+  product_gids?: string[] | null;
+}
+
+export interface CatalogChange {
+  id: number;
+  product_gid: string;
+  product_title: string;
+  attribute_key: string | null;
+  action:
+    | "approve"
+    | "edit_approve"
+    | "reject"
+    | "publish"
+    | "publish_failed"
+    | "revert";
+  before: unknown;
+  after: unknown;
+  details: Record<string, unknown>;
+  created_at: string;
+  reverted_at: string | null;
+  revertible: boolean;
+}
+
+export interface DiscoveryTest {
+  schema_key: string;
+  schema_name: string;
+  query: string;
+  attributes: string[];
+  products: number;
+  supported: number;
+}
+
+export interface CatalogOverview {
+  has_audit: boolean;
+  products_analyzed: number;
+  readiness_score: string | null;
+  discovery_score: string | null;
+  ready_products: number;
+  ready_threshold: number;
+  products_missing_required: number;
+  missing_attribute_instances: number;
+  findings_by_severity: Partial<Record<FindingSeverity, number>>;
+  top_findings: { code: string; severity: FindingSeverity; count: number }[];
+  suggestions: Partial<Record<SuggestionStatus, number>>;
+  failed_validations: number;
+  ai_enabled: boolean;
+  trend: RunPoint[];
+  recent_runs: RunPoint[];
+  recent_jobs: EnrichmentJob[];
+  recent_changes: CatalogChange[];
+  discovery_tests: DiscoveryTest[];
+}
+
+export interface CatalogProduct {
+  product_gid: string;
+  title: string;
+  status: string;
+  product_type: string;
+  vendor: string;
+  category_name: string | null;
+  schema_key: string | null;
+  readiness_score: number | null;
+  discovery_score: number | null;
+  findings: Partial<Record<FindingSeverity, number>>;
+  admin_url: string;
+  synced_at: string;
+}
+
+export interface Page<T> {
+  total: number;
+  items: T[];
+}
+
+export interface CatalogFinding {
+  id: number;
+  product_gid: string;
+  product_title: string;
+  code: string;
+  attribute_key: string | null;
+  severity: FindingSeverity;
+  method: "rule" | "ai";
+  message: string;
+  why_it_matters: string;
+  recommended_action: string;
+  evidence: string | null;
+  confidence: string | null;
+  created_at: string;
+}
+
+export type SuggestionStatus =
+  | "pending"
+  | "approved"
+  | "rejected"
+  | "superseded"
+  | "published"
+  | "failed"
+  | "reverted";
+
+export interface Suggestion {
+  id: string;
+  product_gid: string;
+  product_title: string;
+  schema_key: string;
+  attribute_key: string;
+  attribute_label: string;
+  data_type: string;
+  unit: string | null;
+  allowed_values: string[] | null;
+  current_value: unknown;
+  proposed_value: unknown;
+  approved_value: unknown;
+  display_current: string;
+  display_proposed: string;
+  evidence: string | null;
+  evidence_source: string | null;
+  confidence: string;
+  method: string;
+  explanation: string;
+  validation_status: "valid" | "warning" | "invalid" | "unknown";
+  validation_errors: string[];
+  status: SuggestionStatus;
+  last_error: string | null;
+  created_at: string;
+  reviewed_at: string | null;
+  published_at: string | null;
+}
+
+export interface AttributeRow {
+  key: string;
+  label: string;
+  type: string;
+  unit: string | null;
+  importance: FindingSeverity;
+  required: boolean;
+  current: unknown;
+  current_display: string;
+  source: string | null;
+  errors: string[];
+  metafield: string | null;
+}
+
+export interface ReadinessComponent {
+  weight: number;
+  value: number | null;
+  applicable: boolean;
+  points: number | null;
+}
+
+export interface ProductDetail {
+  product: CatalogProduct;
+  schema_name: string | null;
+  readiness_breakdown: Record<string, ReadinessComponent>;
+  attributes: AttributeRow[];
+  findings: CatalogFinding[];
+  suggestions: Suggestion[];
+  changes: CatalogChange[];
+}
+
+export interface ReviewAction {
+  id: string;
+  action: "approve" | "edit" | "reject";
+  value?: unknown;
+}
+
+export interface ReviewResult {
+  results: { id: string; ok: boolean; error?: string; status?: string }[];
+  succeeded: number;
+  failed: number;
+}
+
+export interface PublishPreviewItem {
+  suggestion_id: string;
+  product_gid: string;
+  product_title: string;
+  attribute_key: string;
+  metafield?: string;
+  type?: string;
+  value?: string | null;
+  current_value?: string | null;
+  current_type?: string | null;
+  action: "create" | "update" | "unchanged" | "blocked";
+  problems: string[];
+  creates_definition?: boolean;
+}
+
+export interface PublishPreview {
+  items: PublishPreviewItem[];
+  writable: number;
+  unchanged: number;
+  blocked: number;
+}
+
+export interface PublishResult {
+  published: number;
+  unchanged: number;
+  failed: number;
+}
+
+export interface AttributeDefinition {
+  key: string;
+  label: string;
+  type: string;
+  unit: string | null;
+  importance: FindingSeverity;
+  required: boolean;
+  allowed_values: string[] | null;
+  aliases: string[];
+  pattern: string | null;
+  why: string;
+  metafield: { namespace: string; key: string; type: string } | null;
+}
+
+export interface CategorySchema {
+  key: string;
+  name: string;
+  match_product_types: string[];
+  match_keywords: string[];
+  match_categories: string[];
+  variant_options: string[];
+  attributes: AttributeDefinition[];
+  discovery_queries: { query: string; attributes: string[] }[];
+}
+
+export interface SchemaEntry {
+  key: string;
+  customized: boolean;
+  builtin: boolean;
+  definition: CategorySchema;
+}
+
+export interface MetafieldMappingEntry {
+  attribute_key: string;
+  labels: string[];
+  attribute_type: string;
+  namespace: string;
+  key: string;
+  type: string;
+  enabled: boolean;
+  source: "default" | "custom";
+  compatible_types: string[];
+  shopify_definition: string | null;
+  status: "ok" | "will_create" | "conflict" | "unknown";
+}
+
+export interface CatalogSettings {
+  readiness_weights: Record<string, number>;
+  default_weights: Record<string, number>;
+  ready_threshold: number;
+  ai_enabled: boolean;
+  ai_model: string | null;
+  auto_publish: boolean;
+  auto_publish_note: string;
+}

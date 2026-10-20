@@ -16,9 +16,11 @@ from app.core.config import get_settings
 from app.core.db import create_database
 from app.core.logging import configure_logging
 from app.jobs.audit_worker import AuditWorker
+from app.jobs.enrichment_worker import EnrichmentWorker
 from app.protocols.acp_adapter import AcpAdapter
 from app.protocols.base import ProtocolError
 from app.protocols.ucp_adapter import UcpAdapter
+from app.services.ai_enricher import enricher_from_settings
 from app.services.shopify_client import ShopifyTokenProvider
 
 ACP, UCP = AcpAdapter(), UcpAdapter()
@@ -38,10 +40,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if settings.audit_worker_enabled:
         app.state.audit_worker = worker
         worker.start()
+    app.state.enricher = enricher_from_settings(settings)
+    enrichment = EnrichmentWorker(
+        app.state.db, app.state.http_client, app.state.shopify_tokens, settings, app.state.enricher
+    )
+    if settings.enrichment_worker_enabled:
+        app.state.enrichment_worker = enrichment
+        enrichment.start()
     try:
         async with app.state.mcp.session_manager.run():
             yield
     finally:
+        await enrichment.stop()
         await worker.stop()
         await app.state.http_client.aclose()
         await app.state.db.dispose()
@@ -60,7 +70,7 @@ def create_app() -> FastAPI:
         app.add_middleware(
             CORSMiddleware,
             allow_origins=settings.cors_origins,
-            allow_methods=["GET", "POST"],
+            allow_methods=["GET", "POST", "PUT", "DELETE"],
             allow_headers=["*"],
         )
 

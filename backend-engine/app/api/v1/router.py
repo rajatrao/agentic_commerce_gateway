@@ -5,6 +5,7 @@ from app.api.v1 import (
     agent_clients,
     agent_gateway,
     audits,
+    catalog,
     internal,
     merchant,
     orders,
@@ -15,6 +16,7 @@ from app.api.v1 import (
 api_router = APIRouter(prefix="/api/v1")
 api_router.include_router(merchant.router)
 api_router.include_router(audits.router)
+api_router.include_router(catalog.router)
 api_router.include_router(agent_gateway.router)
 api_router.include_router(webhooks.router)
 api_router.include_router(agent_clients.router)

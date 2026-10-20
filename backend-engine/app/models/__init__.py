@@ -2,6 +2,17 @@
 
 from app.models.audit import AuditRun, InstallationCheck, ProductAudit, RunStatus
 from app.models.base import SCHEMA
+from app.models.catalog import (
+    AttributeSuggestion,
+    AuditFinding,
+    CatalogChange,
+    CatalogProduct,
+    CategorySchemaOverride,
+    EnrichmentJob,
+    MetafieldMapping,
+    Severity,
+    SuggestionStatus,
+)
 from app.models.mapping import MappingSource, MetaMappingRule
 from app.models.merchant import AgentClient, AgentProtocol, Merchant, MerchantStatus
 from app.models.shared_state import LlmTxtCacheEntry, ServiceTokenJti
@@ -17,17 +28,26 @@ __all__ = [
     "AgentCart",
     "AgentClient",
     "AgentProtocol",
+    "AttributeSuggestion",
+    "AuditFinding",
     "AuditRun",
     "CartStatus",
+    "CatalogChange",
+    "CatalogProduct",
+    "CategorySchemaOverride",
+    "EnrichmentJob",
     "IdempotencyRecord",
     "InstallationCheck",
     "LlmTxtCacheEntry",
     "MappingSource",
     "Merchant",
     "MerchantStatus",
+    "MetafieldMapping",
     "MetaMappingRule",
     "ProductAudit",
     "RunStatus",
     "ServiceTokenJti",
+    "Severity",
+    "SuggestionStatus",
     "WebhookEvent",
 ]

@@ -58,6 +58,16 @@ class Settings(BaseSettings):
     # Retry n waits n * this many seconds.
     audit_retry_backoff_seconds: float = 60.0
 
+    # AI enrichment (Claude). Without a key, enrichment uses rule-based extraction only.
+    anthropic_api_key: str = ""
+    ai_model: str = "claude-opus-5-5"
+    ai_effort: Literal["low", "medium", "high"] = "medium"
+    # Enrichment job worker (Postgres job queue over enrichment_jobs).
+    enrichment_worker_enabled: bool = True
+    enrichment_max_products: int = 250
+    # Approved values written to Shopify per publish request.
+    publish_max_suggestions: int = 250
+
     # Public https origin of this service, used in discovery documents (UCP profile). Falls back
     # to the request's own base URL.
     public_base_url: str = ""

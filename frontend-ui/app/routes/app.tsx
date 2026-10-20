@@ -19,7 +19,12 @@ export default function App() {
     <AppProvider apiKey={apiKey}>
       <s-app-nav>
         <s-link href="/app">Dashboard</s-link>
-        <s-link href="/app/products">Product audit</s-link>
+        <s-link href="/app/products">Catalog audit</s-link>
+        <s-link href="/app/review">Review queue</s-link>
+        <s-link href="/app/activity">Sync and jobs</s-link>
+        <s-link href="/app/schemas">Category schemas</s-link>
+        <s-link href="/app/mappings">Metafield mapping</s-link>
+        <s-link href="/app/settings">Settings</s-link>
         <s-link href="/app/agents">Agent access</s-link>
         <s-link href="/app/checkouts">Agent checkouts</s-link>
       </s-app-nav>

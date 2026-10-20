@@ -1,7 +1,12 @@
 import { generateKeyPairSync } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { backend, BackendError } from "../backend.server";
+import {
+  backend,
+  BackendError,
+  errorMessage,
+  toQuery,
+} from "../backend.server";
 import { resetKeyCache } from "../jwt.server";
 
 const { privateKey } = generateKeyPairSync("ed25519", {
@@ -56,5 +61,51 @@ describe("backend client", () => {
     expect(error).toBeInstanceOf(BackendError);
     expect(error.status).toBe(403);
     expect(error.detail).toBe("merchant not installed");
+  });
+
+  it("publishes only with explicit confirmation and the chosen ids", async () => {
+    fetchMock.mockResolvedValue(
+      Response.json({ published: 1, unchanged: 0, failed: 0 }),
+    );
+    await backend.publish("acme.myshopify.com", ["s1"]);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe(
+      "http://backend.internal:8000/api/v1/merchant/catalog/publish",
+    );
+    expect(JSON.parse(init.body)).toEqual({
+      suggestion_ids: ["s1"],
+      confirm: true,
+    });
+  });
+
+  it("maps a missing catalog product to null", async () => {
+    fetchMock.mockResolvedValue(
+      Response.json({ detail: "product not found" }, { status: 404 }),
+    );
+    await expect(
+      backend.catalogProduct("acme.myshopify.com", "123"),
+    ).resolves.toBeNull();
+  });
+});
+
+describe("helpers", () => {
+  it("builds query strings without empty values", () => {
+    expect(
+      toQuery({
+        status: "pending",
+        product: "",
+        limit: 50,
+        writes_only: false,
+      }),
+    ).toBe("status=pending&limit=50&writes_only=false");
+  });
+
+  it("explains errors for merchants", () => {
+    expect(errorMessage(new BackendError(409, "already running"))).toBe(
+      "already running",
+    );
+    expect(errorMessage(new TypeError("fetch failed"))).toBe(
+      "The gateway engine is unreachable.",
+    );
   });
 });

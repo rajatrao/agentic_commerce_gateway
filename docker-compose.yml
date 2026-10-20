@@ -1,7 +1,8 @@
-# Local development stack: Postgres + backend-engine + frontend-ui, with hot reload.
-#   make keys            # once: generates .env with the Ed25519 + Fernet keys
-#   docker compose up    # http://localhost:8000/docs (API), http://localhost:3000 (app)
-#   make up-ollama       # same, plus a local Ollama server running Qwen for AI enrichment
+# Supporting services for local development: Postgres + backend-engine, with hot reload.
+# The Shopify app (frontend-ui) runs on your machine with `npm run dev`; see README.
+#   make keys                                             # once: writes the keys to .env
+#   docker compose up -d                                  # http://localhost:8000/docs
+#   AI_PROVIDER=ollama docker compose --profile ollama up -d   # optional: local Qwen model
 
 name: agentic-commerce-gateway
 
@@ -35,18 +36,21 @@ services:
       DATABASE_URL: postgresql://gateway:gateway@postgres:5432/gateway
       JWT_PUBLIC_KEY: ${JWT_PUBLIC_KEY:-}
       BACKEND_JWT_PRIVATE_KEY: ${BACKEND_JWT_PRIVATE_KEY:-}
-      FRONTEND_INTERNAL_URL: http://frontend:3000
+      # frontend-ui runs on your machine (npm run dev, port 3000 from shopify.web.toml).
+      FRONTEND_INTERNAL_URL: ${FRONTEND_INTERNAL_URL:-http://host.docker.internal:3000}
       PUBLIC_BASE_URL: ${BACKEND_PUBLIC_URL:-http://localhost:8000}
       TOKEN_ENCRYPTION_KEY: ${TOKEN_ENCRYPTION_KEY:-}
       SHOPIFY_API_KEY: ${SHOPIFY_API_KEY:-}
       SHOPIFY_API_SECRET: ${SHOPIFY_API_SECRET:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       # AI enrichment provider: anthropic | ollama | openai_compatible (empty: anthropic when a
-      # key is set, otherwise rules only). `make up-ollama` sets ollama.
+      # key is set, otherwise rules only). `AI_PROVIDER=ollama` with the ollama profile uses it.
       AI_PROVIDER: ${AI_PROVIDER:-}
       AI_MODEL: ${AI_MODEL:-}
       AI_BASE_URL: ${AI_BASE_URL:-http://ollama:11434}
       AI_API_KEY: ${AI_API_KEY:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "8000:8000"
     volumes:
@@ -62,35 +66,7 @@ services:
       timeout: 5s
       retries: 10
 
-  frontend:
-    build:
-      context: ./frontend-ui
-      target: dev
-    env_file:
-      - path: .env
-        required: false
-    environment:
-      DATABASE_URL: postgresql://gateway:gateway@postgres:5432/gateway?schema=shopify_app
-      BACKEND_INTERNAL_URL: http://backend:8000
-      BACKEND_PUBLIC_URL: ${BACKEND_PUBLIC_URL:-http://localhost:8000}
-      JWT_PRIVATE_KEY: ${JWT_PRIVATE_KEY:-}
-      BACKEND_JWT_PUBLIC_KEY: ${BACKEND_JWT_PUBLIC_KEY:-}
-      SHOPIFY_API_KEY: ${SHOPIFY_API_KEY:-}
-      SHOPIFY_API_SECRET: ${SHOPIFY_API_SECRET:-}
-      SHOPIFY_APP_URL: ${SHOPIFY_APP_URL:-http://localhost:3000}
-      SCOPES: write_products,write_metaobjects,read_inventory,read_themes,write_draft_orders,read_shipping,read_orders
-    ports:
-      - "3000:3000"
-    volumes:
-      - ./frontend-ui/app:/app/app
-      - ./frontend-ui/prisma:/app/prisma
-    depends_on:
-      postgres:
-        condition: service_healthy
-      backend:
-        condition: service_healthy
-
-  # Local LLM for AI enrichment. Only started with the "ollama" profile (make up-ollama).
+  # Local LLM for AI enrichment. Only started with the "ollama" profile.
   # Runs on CPU; on a machine with an NVIDIA GPU, add a `deploy.resources` GPU reservation.
   ollama:
     image: ollama/ollama:0.9.6

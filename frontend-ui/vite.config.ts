@@ -37,7 +37,8 @@ if (host === "localhost") {
 
 export default defineConfig({
   server: {
-    allowedHosts: [host],
+    // backend-engine runs in Docker and calls the app at host.docker.internal:3000.
+    allowedHosts: [host, "host.docker.internal"],
     cors: {
       preflightContinue: true,
     },

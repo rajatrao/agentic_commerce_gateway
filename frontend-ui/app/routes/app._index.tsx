@@ -44,6 +44,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   );
   return {
     shop,
+    // Theme editor deep links need the app's client id (public, same as shopify.app.toml).
+    apiKey: process.env.SHOPIFY_API_KEY || "",
     check: check.status === "fulfilled" ? check.value : null,
     summary: summary.status === "fulfilled" ? summary.value : null,
     overview: overview.status === "fulfilled" ? overview.value : null,
@@ -238,7 +240,7 @@ function isActive(status: string | undefined) {
 }
 
 export default function Dashboard() {
-  const { shop, check, summary, overview, backendError } =
+  const { shop, apiKey, check, summary, overview, backendError } =
     useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const revalidator = useRevalidator();
@@ -316,7 +318,14 @@ export default function Dashboard() {
         </s-banner>
       )}
 
-      {overview && <SetupGuide overview={overview} hasCheck={!!check} />}
+      {overview && (
+        <SetupGuide
+          overview={overview}
+          hasCheck={!!check}
+          themeEnabled={!!check?.app_block_enabled}
+          apiKey={apiKey}
+        />
+      )}
 
       {overview?.has_audit && <Metrics overview={overview} />}
 
@@ -413,15 +422,38 @@ export default function Dashboard() {
   );
 }
 
+// Theme editor deep links: the merchant lands on the right screen with our block or embed
+// preselected and only has to click Save. Handles are the file names in
+// extensions/agentic-schema-block/blocks.
+const THEME_EDITOR = "shopify://admin/themes/current/editor";
+
+function themeLinks(apiKey: string) {
+  return {
+    productBlock: `${THEME_EDITOR}?template=product&addAppBlockId=${apiKey}/product-jsonld&target=mainSection`,
+    storeEmbed: `${THEME_EDITOR}?context=apps&activateAppId=${apiKey}/store-jsonld`,
+  };
+}
+
 function SetupGuide({
   overview,
   hasCheck,
+  themeEnabled,
+  apiKey,
 }: {
   overview: CatalogOverview;
   hasCheck: boolean;
+  themeEnabled: boolean;
+  apiKey: string;
 }) {
+  const links = themeLinks(apiKey);
   const s = overview.suggestions;
-  const steps = [
+  const steps: {
+    done: boolean;
+    label: string;
+    detail: string;
+    href: string | null;
+    actions?: { label: string; href: string }[];
+  }[] = [
     {
       done: overview.has_audit,
       label: "Audit your catalog",
@@ -450,6 +482,19 @@ function SetupGuide({
       detail:
         "Preview the metafields first. Every write is logged and can be reverted.",
       href: "/app/review?status=approved",
+    },
+    {
+      done: themeEnabled,
+      label: "Turn on storefront data for AI agents",
+      detail:
+        "Adds your product and store details to your storefront as structured data that AI agents and search engines read. Open each link, then click Save in the theme editor.",
+      href: null,
+      actions: apiKey
+        ? [
+            { label: "Add product data block", href: links.productBlock },
+            { label: "Turn on store data embed", href: links.storeEmbed },
+          ]
+        : [],
     },
     {
       done: hasCheck,
@@ -481,6 +526,19 @@ function SetupGuide({
                 <s-text type="strong">{step.label}</s-text>
               )}
               <s-text color="subdued">{step.detail}</s-text>
+              {!step.done && step.actions?.length ? (
+                <s-stack direction="inline" gap="small-200">
+                  {step.actions.map((action) => (
+                    <s-button
+                      key={action.href}
+                      href={action.href}
+                      target="_top"
+                    >
+                      {action.label}
+                    </s-button>
+                  ))}
+                </s-stack>
+              ) : null}
             </s-stack>
           </s-stack>
         ))}

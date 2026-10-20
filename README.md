@@ -31,6 +31,19 @@ docker compose up --build # Postgres :5432, backend-engine :8000 (/docs), fronte
 
 To run catalog enrichment against a local model instead, use `make up-ollama`. It starts the same stack plus an Ollama container on :11434, pulls `qwen3:8b` on first run (about 5 GB, cached in the `ollama` volume) and sets `AI_PROVIDER=ollama`. Set `AI_MODEL` in `.env` to pull a different model, for example `qwen3:4b` on a machine with less memory. Docker Desktop on macOS cannot use the GPU, so if Ollama is installed natively you may prefer running it there and pointing `AI_BASE_URL` at `http://host.docker.internal:11434`.
 
+To run backend-engine outside Docker, from a Python virtual environment (useful for debugging and IDEs):
+
+```bash
+make keys                        # if you have not already: writes ./.env
+docker compose up -d postgres    # Postgres still runs in Docker
+cd backend-engine
+uv sync                          # creates .venv: Python 3.12 + app and dev dependencies
+uv run --env-file ../.env alembic upgrade head
+uv run --env-file ../.env uvicorn app.main:app --reload --port 8000
+```
+
+Point your editor at `backend-engine/.venv/bin/python`, or `source backend-engine/.venv/bin/activate` to use `pytest`, `alembic` and `ruff` directly. Without uv: `cd backend-engine && python3.12 -m venv .venv && .venv/bin/pip install -r requirements.txt -r requirements-dev.txt`. Stop the `backend` container first if it is running, since both use port 8000.
+
 To open the app inside Shopify admin, run the Shopify CLI from `frontend-ui/` on your machine (it creates the tunnel and handles Partner login):
 
 ```bash

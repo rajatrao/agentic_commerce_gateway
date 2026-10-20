@@ -46,7 +46,7 @@ The second command runs `shopify app dev` inside the container. The first time i
 
 Database migrations run automatically when the containers start. Code changes reload automatically. After changing `package.json` or `pyproject.toml`, add `--build` to rebuild the images. `docker compose down` stops everything.
 
-Then enable the theme app extension: Online Store > Themes > Customize, add the **Agentic Product Schema** block to the product template and turn on the **Agentic Store Schema** app embed.
+Then enable the theme app extension, which adds product and store structured data to the storefront. The dashboard's **Setup guide** has two buttons, **Add product data block** and **Turn on store data embed**, that open the theme editor with the block or embed preselected; click Save after each. Merchants who install the app follow the same guide. (Manually: Online Store > Themes > Customize, add the **Agentic Product Schema** block to the product template and turn on the **Agentic Store Schema** app embed.)
 
 **Optional: local AI model.** To run catalog enrichment with a local model instead of a hosted one, start the stack with `AI_PROVIDER=ollama docker compose --profile ollama up -d`. It adds an Ollama container on :11434 and pulls `qwen3:8b` on first run (about 5 GB, kept in the `ollama` volume). Set `AI_MODEL` in `.env` to pull a different model, for example `qwen3:4b` on a machine with less memory.
 

@@ -1,6 +1,23 @@
 import { mintServiceToken, type ServiceScope } from "./jwt.server";
 import type {
   AgentClient,
+  CatalogChange,
+  CatalogFinding,
+  CatalogOverview,
+  CatalogProduct,
+  CatalogSettings,
+  CategorySchema,
+  EnrichmentJob,
+  MetafieldMappingEntry,
+  Page,
+  ProductDetail,
+  RunPoint,
+  PublishPreview,
+  PublishResult,
+  ReviewAction,
+  ReviewResult,
+  SchemaEntry,
+  Suggestion,
   AgentCheckoutPage,
   AgentClientCreated,
   AgentProtocol,
@@ -27,6 +44,17 @@ export class BackendError extends Error {
 }
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+const CATALOG = "/api/v1/merchant/catalog";
+
+/** Builds a query string, skipping empty values. */
+export function toQuery(params: Record<string, string | number | boolean>) {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== "" && value !== undefined && value !== null)
+      query.set(key, String(value));
+  }
+  return query.toString();
+}
 
 function baseUrl(): string {
   const url = process.env.BACKEND_INTERNAL_URL;
@@ -189,4 +217,188 @@ export const backend = {
       },
     );
   },
+
+  // ---------------------------------------------------------------- catalog intelligence
+
+  catalogOverview(shop: string) {
+    return backendRequest<CatalogOverview>(shop, `${CATALOG}/overview`);
+  },
+
+  auditRuns(shop: string, limit = 20) {
+    return backendRequest<RunPoint[]>(shop, `${CATALOG}/runs?limit=${limit}`);
+  },
+
+  catalogProducts(shop: string, params: Record<string, string | number> = {}) {
+    return backendRequest<Page<CatalogProduct>>(
+      shop,
+      `${CATALOG}/products?${toQuery(params)}`,
+    );
+  },
+
+  async catalogProduct(
+    shop: string,
+    productId: string,
+  ): Promise<ProductDetail | null> {
+    try {
+      return await backendRequest<ProductDetail>(
+        shop,
+        `${CATALOG}/products/${encodeURIComponent(productId)}`,
+      );
+    } catch (error) {
+      if (error instanceof BackendError && error.status === 404) return null;
+      throw error;
+    }
+  },
+
+  catalogFindings(shop: string, params: Record<string, string | number> = {}) {
+    return backendRequest<Page<CatalogFinding>>(
+      shop,
+      `${CATALOG}/findings?${toQuery(params)}`,
+    );
+  },
+
+  startEnrichment(
+    shop: string,
+    body: {
+      product_gids?: string[];
+      lowest_readiness?: number;
+      use_ai: boolean;
+    },
+  ) {
+    return backendRequest<EnrichmentJob>(shop, `${CATALOG}/enrichment-jobs`, {
+      method: "POST",
+      body,
+    });
+  },
+
+  enrichmentJobs(shop: string) {
+    return backendRequest<EnrichmentJob[]>(shop, `${CATALOG}/enrichment-jobs`);
+  },
+
+  enrichmentJob(shop: string, id: string) {
+    return backendRequest<EnrichmentJob>(
+      shop,
+      `${CATALOG}/enrichment-jobs/${encodeURIComponent(id)}`,
+    );
+  },
+
+  retryEnrichmentJob(shop: string, id: string) {
+    return backendRequest<EnrichmentJob>(
+      shop,
+      `${CATALOG}/enrichment-jobs/${encodeURIComponent(id)}/retry`,
+      { method: "POST" },
+    );
+  },
+
+  suggestions(shop: string, params: Record<string, string | number> = {}) {
+    return backendRequest<Page<Suggestion>>(
+      shop,
+      `${CATALOG}/suggestions?${toQuery(params)}`,
+    );
+  },
+
+  reviewSuggestions(shop: string, actions: ReviewAction[]) {
+    return backendRequest<ReviewResult>(shop, `${CATALOG}/suggestions/review`, {
+      method: "POST",
+      body: { actions },
+    });
+  },
+
+  previewPublish(shop: string, suggestionIds?: string[]) {
+    return backendRequest<PublishPreview>(shop, `${CATALOG}/publish/preview`, {
+      method: "POST",
+      body: { suggestion_ids: suggestionIds ?? null },
+      timeoutMs: 120_000,
+    });
+  },
+
+  publish(shop: string, suggestionIds?: string[]) {
+    return backendRequest<PublishResult>(shop, `${CATALOG}/publish`, {
+      method: "POST",
+      body: { suggestion_ids: suggestionIds ?? null, confirm: true },
+      timeoutMs: 180_000,
+    });
+  },
+
+  catalogChanges(
+    shop: string,
+    params: Record<string, string | number | boolean> = {},
+  ) {
+    return backendRequest<Page<CatalogChange>>(
+      shop,
+      `${CATALOG}/changes?${toQuery(params)}`,
+    );
+  },
+
+  revertChange(shop: string, id: number) {
+    return backendRequest<CatalogChange>(
+      shop,
+      `${CATALOG}/changes/${id}/revert`,
+      { method: "POST", timeoutMs: 60_000 },
+    );
+  },
+
+  schemas(shop: string) {
+    return backendRequest<SchemaEntry[]>(shop, `${CATALOG}/schemas`);
+  },
+
+  saveSchema(shop: string, schema: CategorySchema) {
+    return backendRequest<SchemaEntry>(
+      shop,
+      `${CATALOG}/schemas/${encodeURIComponent(schema.key)}`,
+      { method: "PUT", body: schema },
+    );
+  },
+
+  resetSchema(shop: string, key: string) {
+    return backendRequest<void>(
+      shop,
+      `${CATALOG}/schemas/${encodeURIComponent(key)}`,
+      { method: "DELETE" },
+    );
+  },
+
+  mappings(shop: string, checkShopify = false) {
+    return backendRequest<MetafieldMappingEntry[]>(
+      shop,
+      `${CATALOG}/mappings?check_shopify=${checkShopify}`,
+      { timeoutMs: 60_000 },
+    );
+  },
+
+  saveMapping(
+    shop: string,
+    attributeKey: string,
+    body: { namespace: string; key: string; type: string; enabled: boolean },
+  ) {
+    return backendRequest<MetafieldMappingEntry>(
+      shop,
+      `${CATALOG}/mappings/${encodeURIComponent(attributeKey)}`,
+      { method: "PUT", body },
+    );
+  },
+
+  catalogSettings(shop: string) {
+    return backendRequest<CatalogSettings>(shop, `${CATALOG}/settings`);
+  },
+
+  saveCatalogSettings(
+    shop: string,
+    body: {
+      readiness_weights: Record<string, number>;
+      ready_threshold: number;
+    },
+  ) {
+    return backendRequest<CatalogSettings>(shop, `${CATALOG}/settings`, {
+      method: "PUT",
+      body,
+    });
+  },
 };
+
+/** A message for the merchant: the engine's own detail, or a generic outage message. */
+export function errorMessage(error: unknown) {
+  return error instanceof BackendError
+    ? error.detail
+    : "The gateway engine is unreachable.";
+}

@@ -1,4 +1,4 @@
-.PHONY: keys up down logs test test-backend test-frontend lint prod-smoke
+.PHONY: keys up up-ollama down logs test test-backend test-frontend lint prod-smoke
 
 keys:            ## Generate JWT + encryption keys into .env
 	node scripts/generate-keys.mjs
@@ -6,8 +6,11 @@ keys:            ## Generate JWT + encryption keys into .env
 up: keys         ## Start Postgres, backend-engine and frontend-ui with hot reload
 	docker compose up --build
 
+up-ollama: keys  ## Same as `up`, plus Ollama running Qwen (qwen3:8b) for AI enrichment
+	AI_PROVIDER=ollama docker compose --profile ollama up --build
+
 down:
-	docker compose down
+	docker compose --profile ollama down
 
 logs:
 	docker compose logs -f

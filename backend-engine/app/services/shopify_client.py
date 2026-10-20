@@ -228,7 +228,7 @@ PRODUCT_FIELDS = """
       ... on MediaImage { image { url altText } }
     }
   }
-  variants(first: 100) {
+  variants(first: 50) {
     nodes {
       id
       title
@@ -241,17 +241,25 @@ PRODUCT_FIELDS = """
       inventoryItem { tracked }
     }
   }
-  metafields(first: 25) {
+  metafields(first: 30) {
     nodes { namespace key type value }
   }
 """
 
+# Page size is bounded by Shopify's 1,000-point single-query cost limit: each product costs
+# roughly 100 points with its variants, media and metafields connections.
 PRODUCTS_QUERY = f"""
 query AuditProducts($cursor: String, $query: String) {{
-  products(first: 50, after: $cursor, query: $query, sortKey: ID) {{
+  products(first: 8, after: $cursor, query: $query, sortKey: ID) {{
     nodes {{ {PRODUCT_FIELDS} }}
     pageInfo {{ hasNextPage endCursor }}
   }}
+}}
+"""
+
+PRODUCT_QUERY = f"""
+query EnrichProduct($id: ID!) {{
+  product(id: $id) {{ {PRODUCT_FIELDS} }}
 }}
 """
 

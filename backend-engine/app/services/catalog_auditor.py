@@ -91,6 +91,9 @@ class ProductScore:
     missing_fields: list[str]
     content_hash: str
     mapped_attributes: dict[str, str] = field(default_factory=dict)
+    # Filled by the catalog-intelligence assessor (services/readiness.py) when one is given.
+    readiness: Any = None
+    snapshot: dict[str, Any] = field(default_factory=dict)
 
 
 def plain_text(description: str | None, description_html: str | None = None) -> str:
@@ -303,6 +306,7 @@ class CatalogSummary:
     avg_score: Decimal | None
     grade_counts: dict[str, int]
     top_issues: list[tuple[str, int]]
+    avg_readiness: Decimal | None = None
 
 
 def grade(score: int) -> str:
@@ -323,15 +327,27 @@ def summarize(scores: list[ProductScore]) -> CatalogSummary:
     )
     grades = Counter(grade(s.score) for s in scores)
     issues = Counter(code for s in scores for code in s.missing_fields)
-    return CatalogSummary(len(scores), avg, dict(grades), issues.most_common(10))
+    readiness = [s.readiness.score for s in scores if s.readiness is not None]
+    avg_readiness = (
+        (Decimal(sum(readiness)) / len(readiness)).quantize(Decimal("0.01"), ROUND_HALF_UP)
+        if readiness
+        else None
+    )
+    return CatalogSummary(len(scores), avg, dict(grades), issues.most_common(10), avg_readiness)
 
 
 class CatalogAuditor:
     """Streams products, scores them and hands results to a sink in batches."""
 
-    def __init__(self, rules: list[MappingRule], batch_size: int = 100) -> None:
+    def __init__(
+        self,
+        rules: list[MappingRule],
+        batch_size: int = 100,
+        assessor: Callable[[dict[str, Any], ProductScore], None] | None = None,
+    ) -> None:
         self._rules = rules
         self._batch_size = batch_size
+        self._assessor = assessor
 
     async def run(
         self,
@@ -342,6 +358,8 @@ class CatalogAuditor:
         all_scores: list[ProductScore] = []
         async for product in products:
             scored = score_product(product, self._rules)
+            if self._assessor is not None:
+                self._assessor(product, scored)
             batch.append(scored)
             all_scores.append(scored)
             if len(batch) >= self._batch_size:

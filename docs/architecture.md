@@ -148,7 +148,7 @@ The offline Admin token gets to the backend through the Remix `afterAuth` hook, 
 | id uuid PK | merchant_id FK | store_url text | jsonld_valid bool | schemas_found text[] | has_product_schema bool | has_org_schema bool | app_block_enabled bool | findings jsonb | checked_at timestamptz |
 
 **audit_runs**
-| id uuid PK | merchant_id FK | started_at | finished_at | products_scanned int | avg_score numeric(5,2) | status enum |
+| id uuid PK | merchant_id FK | started_at | finished_at | products_scanned int | avg_score numeric(5,2) | avg_readiness numeric(5,2) | stats jsonb (schema counts, discovery tests) | status enum |
 
 **product_audits**: Product AI audits
 | column | type | notes |
@@ -176,6 +176,24 @@ The offline Admin token gets to the backend through the Remix `afterAuth` hook, 
 
 **idempotency_records**: stored responses for agent `Idempotency-Key` replays (24 h)
 | id bigint PK | agent_client_id FK | key text | request_hash text | status_code int (NULL while in flight) | response_body jsonb | created_at | UNIQUE `(agent_client_id, key)` |
+
+**catalog_products**: latest snapshot of each product, kept current by audits and products/update|delete webhooks
+| id uuid PK | merchant_id FK | product_gid text | title, product_type, vendor, status | category_name | schema_key | attributes jsonb (current structured values by attribute) | readiness_score smallint | discovery_score smallint | shopify_updated_at | synced_at | removed_at | UNIQUE `(merchant_id, product_gid)` |
+
+**audit_findings**: one row per issue (rule-based per audit run, or AI per enrichment job)
+| id bigint PK | merchant_id FK | run_id FK audit_runs (cascade) | job_id FK enrichment_jobs (cascade) | product_gid | code | attribute_key | severity enum(`critical`,`high`,`medium`,`low`) | method `rule`/`ai` | message | why_it_matters | recommended_action | evidence | confidence numeric(3,2) |
+
+**category_schemas**: merchant overrides or additions to the built-in category schemas (jsonb definition)
+
+**metafield_mappings**: per-attribute write target (namespace, key, metafield type, enabled), overriding schema defaults
+
+**enrichment_jobs**: durable queue (same claim/heartbeat/fencing scheme as audit_runs)
+| id uuid PK | merchant_id FK | status run_status | product_gids text[] | use_ai bool | total/succeeded/failed int | results jsonb (per product) | attempts | next_attempt_at | heartbeat_at |
+
+**attribute_suggestions**: proposed attribute values with provenance
+| id uuid PK | merchant_id FK | job_id FK | product_gid | schema_key | attribute_key | data_type | current_value / proposed_value / approved_value jsonb | evidence text | evidence_source | confidence | method (`rule_extraction`, `llm:<model>`, `+merchant_edit`) | validation_status, validation_errors | status enum(`pending`,`approved`,`rejected`,`superseded`,`published`,`failed`,`reverted`) | reviewed_at / published_at | partial UNIQUE `(merchant_id, product_gid, attribute_key)` while pending or approved |
+
+**catalog_changes**: append-only audit log of reviews, writes and reverts (before/after jsonb, details, reverted_at)
 
 **webhook_events**: dedupe and replay
 | id bigserial | shop_domain | topic | webhook_id text UNIQUE | payload jsonb | received_at | processed_at |

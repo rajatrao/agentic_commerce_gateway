@@ -58,6 +58,26 @@ class Settings(BaseSettings):
     # Retry n waits n * this many seconds.
     audit_retry_backoff_seconds: float = 60.0
 
+    # AI enrichment. Optional: without a provider, enrichment uses rule-based extraction only.
+    #   anthropic          Claude via the Anthropic API (needs ANTHROPIC_API_KEY)
+    #   ollama             a local Ollama server, e.g. Qwen (AI_BASE_URL, default localhost)
+    #   openai_compatible  any OpenAI-compatible /chat/completions API (AI_BASE_URL, AI_API_KEY)
+    # Left empty, the provider is anthropic when ANTHROPIC_API_KEY is set, otherwise none.
+    ai_provider: Literal["", "none", "anthropic", "ollama", "openai_compatible"] = ""
+    # Empty means the provider's default (see DEFAULT_AI_MODELS).
+    ai_model: str = ""
+    ai_base_url: str = ""
+    ai_api_key: str = ""
+    ai_timeout_seconds: float = 300.0
+    anthropic_api_key: str = ""
+    # Anthropic only.
+    ai_effort: Literal["low", "medium", "high"] = "medium"
+    # Enrichment job worker (Postgres job queue over enrichment_jobs).
+    enrichment_worker_enabled: bool = True
+    enrichment_max_products: int = 250
+    # Approved values written to Shopify per publish request.
+    publish_max_suggestions: int = 250
+
     # Public https origin of this service, used in discovery documents (UCP profile). Falls back
     # to the request's own base URL.
     public_base_url: str = ""

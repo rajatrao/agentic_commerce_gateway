@@ -59,6 +59,13 @@ class AuditRun(SQLModel, table=True):
     finished_at: datetime | None = Field(default=None, sa_column=tz_column(nullable=True))
     products_scanned: int = 0
     avg_score: Decimal | None = Field(default=None, sa_column=Column(Numeric(5, 2)))
+    # Catalog readiness (attribute schema completeness, validity, consistency; see
+    # services/readiness.py). Separate from the AI Discovery Score above.
+    avg_readiness: Decimal | None = Field(default=None, sa_column=Column(Numeric(5, 2)))
+    # Run-level aggregates, e.g. {"discovery_tests": [...], "schemas": {...}}.
+    stats: dict[str, Any] = Field(
+        default_factory=dict, sa_column=Column(JSONB, nullable=False, server_default="{}")
+    )
     attempts: int = Field(
         default=0, sa_column=Column(SmallInteger, nullable=False, server_default="0")
     )
@@ -88,4 +95,9 @@ class ProductAudit(SQLModel, table=True):
         default_factory=list, sa_column=Column(ARRAY(String), nullable=False, server_default="{}")
     )
     content_hash: str
+    schema_key: str | None = None
+    readiness_score: int | None = Field(default=None, sa_column=Column(SmallInteger))
+    readiness_breakdown: dict[str, Any] = Field(
+        default_factory=dict, sa_column=Column(JSONB, nullable=False, server_default="{}")
+    )
     audited_at: datetime = Field(default_factory=utcnow, sa_column=tz_column())

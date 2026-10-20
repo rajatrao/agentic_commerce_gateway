@@ -6,12 +6,17 @@ from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import and_, any_, delete, func, literal, or_, text, update
+from sqlalchemy.dialects.postgresql import insert
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from app.models import AuditRun, ProductAudit, RunStatus
+from app.models import AuditFinding, AuditRun, CatalogProduct, ProductAudit, RunStatus, Severity
 from app.models.base import utcnow
 from app.services.catalog_auditor import ProductScore
+
+# Per-product rows (scores and findings) are kept for this many recent completed runs; older
+# runs keep only their run-level averages, which feed the quality trend.
+KEEP_DETAILED_RUNS = 10
 
 
 class LostClaim(Exception):
@@ -96,6 +101,7 @@ class AuditRepository:
                 await self.session.commit()
                 continue
             await self.session.exec(delete(ProductAudit).where(col(ProductAudit.run_id) == run.id))
+            await self.session.exec(delete(AuditFinding).where(col(AuditFinding.run_id) == run.id))
             run.attempts += 1
             run.status, run.heartbeat_at, run.products_scanned = RunStatus.RUNNING, now, 0
             self.session.add(run)
@@ -116,25 +122,115 @@ class AuditRepository:
                 breakdown=s.breakdown,
                 missing_fields=s.missing_fields,
                 content_hash=s.content_hash,
+                schema_key=s.readiness.schema_key if s.readiness else None,
+                readiness_score=s.readiness.score if s.readiness else None,
+                readiness_breakdown=s.readiness.breakdown if s.readiness else {},
             )
             for s in scores
         )
+        self.session.add_all(
+            AuditFinding(
+                merchant_id=claim.merchant_id,
+                run_id=claim.id,
+                product_gid=s.product_gid,
+                product_title=s.title,
+                code=f.code,
+                attribute_key=f.attribute_key,
+                severity=Severity(f.severity),
+                method=f.method,
+                message=f.message,
+                why_it_matters=f.why_it_matters,
+                recommended_action=f.recommended_action,
+                evidence=f.evidence,
+                confidence=f.confidence,
+            )
+            for s in scores
+            if s.readiness is not None
+            for f in s.readiness.findings
+        )
+        await self._upsert_snapshots(claim, [s for s in scores if s.snapshot])
         products_scanned = col(AuditRun.products_scanned) + len(scores)
         if not await self._fenced(claim, products_scanned=products_scanned, commit=False):
             await self.session.rollback()
             raise LostClaim(str(claim.id))
         await self.session.commit()
 
-    async def finish_run(self, claim: ClaimedRun, avg_score: Decimal | None) -> None:
+    async def _upsert_snapshots(self, claim: ClaimedRun, scores: list[ProductScore]) -> None:
+        if not scores:
+            return
+        now = utcnow()
+        rows = [
+            {
+                "id": uuid.uuid4(),
+                "merchant_id": claim.merchant_id,
+                "product_gid": s.product_gid,
+                "title": s.title,
+                **s.snapshot,
+                "schema_key": s.readiness.schema_key if s.readiness else None,
+                "attributes": s.readiness.attributes_json() if s.readiness else {},
+                "readiness_score": s.readiness.score if s.readiness else None,
+                "discovery_score": s.score,
+                "synced_at": now,
+                "removed_at": None,
+            }
+            for s in scores
+        ]
+        stmt = insert(CatalogProduct).values(rows)
+        update_cols = {
+            c: stmt.excluded[c] for c in rows[0] if c not in ("id", "merchant_id", "product_gid")
+        }
+        await self.session.exec(
+            stmt.on_conflict_do_update(
+                index_elements=["merchant_id", "product_gid"], set_=update_cols
+            )
+        )
+
+    async def finish_run(
+        self,
+        claim: ClaimedRun,
+        avg_score: Decimal | None,
+        avg_readiness: Decimal | None = None,
+        stats: dict[str, Any] | None = None,
+    ) -> None:
+        run = await self.session.get(AuditRun, claim.id)
+        started_at = run.started_at if run else utcnow()
         done = await self._fenced(
             claim,
+            commit=False,
             status=RunStatus.COMPLETED,
             finished_at=utcnow(),
             avg_score=avg_score,
+            avg_readiness=avg_readiness,
+            stats=stats or {},
             last_error=None,
         )
         if not done:
+            await self.session.rollback()
             raise LostClaim(str(claim.id))
+        if stats is not None:
+            # A full pass saw every active product: anything not refreshed has left the
+            # active catalog (deleted, archived or set to draft since the last sync).
+            await self.session.exec(
+                update(CatalogProduct)
+                .where(
+                    col(CatalogProduct.merchant_id) == claim.merchant_id,
+                    col(CatalogProduct.synced_at) < started_at,
+                    col(CatalogProduct.removed_at).is_(None),
+                )
+                .values(removed_at=utcnow())
+            )
+        await self._apply_retention(claim.merchant_id)
+        await self.session.commit()
+
+    async def _apply_retention(self, merchant_id: uuid.UUID) -> None:
+        old_runs = (
+            select(AuditRun.id)
+            .where(AuditRun.merchant_id == merchant_id, AuditRun.status == RunStatus.COMPLETED)
+            .order_by(col(AuditRun.started_at).desc())
+            .offset(KEEP_DETAILED_RUNS)
+        )
+        await self.session.exec(delete(ProductAudit).where(col(ProductAudit.run_id).in_(old_runs)))
+        await self.session.exec(delete(AuditFinding).where(col(AuditFinding.run_id).in_(old_runs)))
 
     async def release(self, claim: ClaimedRun) -> None:
         """Hand an interrupted attempt back to the queue without spending an attempt (used on

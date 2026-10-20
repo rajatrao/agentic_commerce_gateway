@@ -5,6 +5,7 @@ description = "Agentic Commerce Gateway: FastAPI engine for catalog auditing, ag
 requires-python = ">=3.12"
 dependencies = [
     "alembic>=1.20.0",
+    "anthropic>=1.15.0",
     "argon2-cffi>=25.1.0",
     "beautifulsoup4>=4.15.0",
     "cryptography>=50.0.2",

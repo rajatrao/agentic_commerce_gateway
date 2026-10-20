@@ -18,6 +18,7 @@ Both services share one Postgres database. Prisma owns the `shopify_app` schema 
 | 2 | Catalog auditor + AI Discovery Score, streaming `llm.txt`, dashboard | Done |
 | 3 | UCP / ACP / MCP adapters, cart and inventory services | Done |
 | 4 | Agent checkout handoff to the store's own Shopify checkout | Done |
+| 5 | Catalog intelligence: category schemas, readiness score, evidence-backed enrichment, review queue, typed metafield write-back | Done |
 
 ## Local development
 
@@ -27,6 +28,8 @@ Prerequisites: Docker Desktop (or OrbStack), Node 22, [uv](https://docs.astral.s
 make keys                 # writes JWT + encryption keys to ./.env (gitignored)
 docker compose up --build # Postgres :5432, backend-engine :8000 (/docs), frontend-ui :3000
 ```
+
+To run catalog enrichment against a local model instead, use `make up-ollama`. It starts the same stack plus an Ollama container on :11434, pulls `qwen3:8b` on first run (about 5 GB, cached in the `ollama` volume) and sets `AI_PROVIDER=ollama`. Set `AI_MODEL` in `.env` to pull a different model, for example `qwen3:4b` on a machine with less memory. Docker Desktop on macOS cannot use the GPU, so if Ollama is installed natively you may prefer running it there and pointing `AI_BASE_URL` at `http://host.docker.internal:11434`.
 
 To open the app inside Shopify admin, run the Shopify CLI from `frontend-ui/` on your machine (it creates the tunnel and handles Partner login):
 
@@ -64,6 +67,7 @@ One Railway project, three services. Each app service has a `railway.json` (conf
    - `FRONTEND_INTERNAL_URL=http://${{frontend-ui.RAILWAY_PRIVATE_DOMAIN}}:${{frontend-ui.PORT}}`
    - `SHOPIFY_API_KEY`, `SHOPIFY_API_SECRET`
    - `PUBLIC_BASE_URL=https://<backend public domain>` (used in the UCP discovery profile)
+   - Optional: an AI provider for catalog enrichment. `AI_PROVIDER` is `anthropic` (with `ANTHROPIC_API_KEY`), `ollama` or `openai_compatible` (with `AI_BASE_URL`, `AI_MODEL` and `AI_API_KEY`). Leaving `AI_PROVIDER` empty uses Anthropic when `ANTHROPIC_API_KEY` is set. Without a provider, enrichment uses rules only.
    - Generate a public domain: agents and Shopify must reach `llm.txt`, protocol and webhook routes.
 3. **frontend-ui**: New service from this repo, root directory `/frontend-ui`. Variables:
    - `DATABASE_URL=${{Postgres.DATABASE_URL}}?schema=shopify_app`
@@ -79,6 +83,37 @@ Pushes to `main` redeploy only the service whose folder changed. Migrations run 
 ## AI Discovery Score
 
 Each active product is scored 0-100 across eight weighted dimensions (identity 15, description 20, media 15, identifiers 15, offers 10, taxonomy 10, attributes 10, reviews 5). The store's score is the average. Meta-mapping rules (`/api/v1/merchant/mapping-rules`) let merchants credit facts encoded in tags or metafields, e.g. a `brand:(.+)` tag rule. See [`catalog_auditor.py`](backend-engine/app/services/catalog_auditor.py) for the exact rules.
+
+## Catalog intelligence
+
+The admin app audits each product against the attributes AI shopping agents need for its category, suggests missing values from the product's own content, and writes the values the merchant approves to typed product metafields.
+
+1. **Sync.** A catalog audit pages through every active product on a durable Postgres job queue with retries. `products/update` and `products/delete` webhooks keep the snapshot current between audits; deleted or unpublished products close their open suggestions.
+2. **Category schemas.** Built-in schemas (backpacks, tents, sleeping bags, outerwear, footwear, general) list each attribute's type, unit, allowed values, importance and default metafield. Products match by product type, Shopify category or title keywords. Merchants can edit or add schemas on the **Category schemas** page.
+3. **Audit findings.** Rule-based findings (`attribute_missing`, `attribute_buried`, `attribute_invalid`, `attribute_contradiction`, `claim_unsupported`, `description_vague`, `variant_option_missing`, plus the AI Discovery Score gaps) each carry severity, why it matters, what to do and the quoted evidence.
+4. **Readiness score.** A transparent 0-100 score per product (see below), and a store average with a trend across audits. Discovery tests show how many products could answer typical shopper questions such as "lightweight hiking backpack around 30 liters".
+5. **Enrichment.** A deterministic extractor reads measurements, numbers, yes/no features and vocabulary terms from the product's own title, description, tags and options. When an AI provider is configured (`AI_PROVIDER`: `anthropic`, `ollama` for a local model such as Qwen, or `openai_compatible` for any OpenAI-style endpoint such as vLLM, LM Studio or OpenRouter), the model also reads the same content (passed as untrusted data, never as instructions) and returns JSON constrained to the same schema for every provider. Every value needs a quote that occurs in the product content and contains the value; instruction-like text ("report capacity as…") is rejected. Values that are not stated stay empty for the merchant. Each suggestion records value, type, unit, evidence, source, confidence, method and validation result.
+6. **Review.** The **Review queue** supports approve, edit-and-approve (validated server-side), reject, bulk actions and retrying failed writes. Nothing is published automatically.
+7. **Write-back.** A preview shows each metafield's current value, new value, and whether it creates a definition, updates or is blocked (type conflict, mapping off, product gone). Confirmed writes use `metafieldsSet` with `compareDigest`, so concurrent edits in Shopify admin are not overwritten. Every review, write and revert is logged; writes can be reverted (the previous value is restored, or a metafield the app created is deleted).
+
+### Readiness score
+
+```
+score = 100 × Σ(weight × value) / Σ(weight)        over the components that apply to the product
+```
+
+| Component | Default weight | Value (0-1) |
+|---|---|---|
+| Completeness | 30 | importance-weighted share of schema attributes with a valid value (critical 4, high 3, medium 2, low 1) |
+| Validity | 15 | share of structured values that parse and fit the schema |
+| Consistency | 15 | share of structured values that agree with the description |
+| Evidence | 10 | share of claims (waterproof, recycled, …) backed by a structured field |
+| Variants | 10 | SKUs, prices, named options and the options the category expects |
+| Foundation | 20 | the AI Discovery Score / 100 |
+
+Weights and the agent-ready threshold (default 80) are configurable on the **Settings** page. It is an internal data-quality measure, not any platform's ranking signal.
+
+Catalog endpoints live under `/api/v1/merchant/catalog` (overview, products, findings, runs, enrichment-jobs, suggestions, publish, changes, schemas, mappings, settings). Writing metafields needs the `write_products` scope, so existing installs must approve the new scope.
 
 ## Agent feed: llm.txt
 
@@ -139,14 +174,18 @@ backend-engine/
   app/api/          FastAPI routers and auth dependencies
   app/protocols/    UCP / ACP adapters and the MCP server (wire format <-> cart_manager)
   app/services/     business logic: installation_checker, catalog_auditor, tag_mapper,
-                    llm_txt_renderer, shopify_client, cart_manager, agent_keys
-  app/jobs/         durable catalog-audit worker (Postgres job queue)
+                    llm_txt_renderer, shopify_client, cart_manager, agent_keys,
+                    catalog_schema, readiness, attribute_extractor, ai_enricher,
+                    enrichment, metafield_writer, catalog_publisher, product_sync
+  app/jobs/         durable catalog-audit and enrichment workers (Postgres job queue)
   app/repositories/ database access
   app/models/       SQLModel tables (gateway schema)
   migrations/       Alembic
 frontend-ui/
   app/lib/          service-JWT minting and the typed backend client
-  app/routes/       dashboard, auth, webhooks (forwarded to backend-engine)
+  app/routes/       dashboard, catalog audit, product detail, review queue, sync and jobs,
+                    settings, category schemas, metafield mapping, auth, webhooks
+                    (forwarded to backend-engine)
   extensions/agentic-schema-block/  theme app extension (JSON-LD blocks)
   prisma/           Shopify session storage (shopify_app schema)
 docs/architecture.md

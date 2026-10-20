@@ -10,9 +10,11 @@ abandoned attempt are fenced off by the attempt number.
 import asyncio
 import contextlib
 from datetime import timedelta
+from typing import Any, Protocol
 
 import httpx
 import structlog
+from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.core.config import Settings
 from app.core.db import Database
@@ -26,7 +28,24 @@ log = structlog.get_logger(__name__)
 PERMANENT_ERRORS = (PermanentAuditError, ShopifyAuthError)
 
 
-class AuditWorker:
+class JobQueue(Protocol):
+    """The repository operations a `QueueWorker` needs (audit runs, enrichment jobs)."""
+
+    async def claim_next(
+        self, *, stale_after: timedelta, max_attempts: int
+    ) -> ClaimedRun | None: ...
+    async def heartbeat(self, claim: ClaimedRun) -> bool: ...
+    async def release(self, claim: ClaimedRun) -> None: ...
+    async def retry_or_fail(
+        self, claim: ClaimedRun, error: str, *, retry_in: timedelta | None
+    ) -> Any: ...
+
+
+class QueueWorker:
+    """Claims due jobs from a Postgres-backed queue, heartbeats and retries them."""
+
+    name = "queue"
+
     def __init__(
         self,
         db: Database,
@@ -41,8 +60,14 @@ class AuditWorker:
         self._wake = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
 
+    def queue(self, session: AsyncSession) -> JobQueue:
+        raise NotImplementedError
+
+    async def execute(self, session: AsyncSession, claim: ClaimedRun) -> Any:
+        raise NotImplementedError
+
     def start(self) -> None:
-        self._task = asyncio.create_task(self._loop(), name="audit-worker")
+        self._task = asyncio.create_task(self._loop(), name=f"{self.name}-worker")
 
     async def stop(self) -> None:
         if self._task is not None:
@@ -52,7 +77,7 @@ class AuditWorker:
             self._task = None
 
     def wake(self) -> None:
-        """Check the queue now instead of at the next poll (a run was just queued here)."""
+        """Check the queue now instead of at the next poll (a job was just queued here)."""
         self._wake.set()
 
     async def _loop(self) -> None:
@@ -62,7 +87,7 @@ class AuditWorker:
             except asyncio.CancelledError:
                 raise
             except Exception:
-                log.exception("audit_worker.loop_error")
+                log.exception(f"{self.name}_worker.loop_error")
                 claimed = False
             if claimed:
                 continue
@@ -71,9 +96,9 @@ class AuditWorker:
             self._wake.clear()
 
     async def run_once(self) -> bool:
-        """Claim and run one due audit. Returns False when the queue had nothing due."""
+        """Claim and run one due job. Returns False when the queue had nothing due."""
         async with self.db.session() as session:
-            claim = await AuditRepository(session).claim_next(
+            claim = await self.queue(session).claim_next(
                 stale_after=timedelta(seconds=self.settings.audit_stale_seconds),
                 max_attempts=self.settings.audit_max_attempts,
             )
@@ -83,37 +108,32 @@ class AuditWorker:
         return True
 
     async def _attempt(self, claim: ClaimedRun) -> None:
-        log.info("audit.started", run_id=str(claim.id), attempt=claim.attempt)
+        log.info(f"{self.name}.started", run_id=str(claim.id), attempt=claim.attempt)
         heartbeat = asyncio.create_task(self._heartbeat(claim))
         try:
             async with self.db.session() as session:
-                audits = AuditRepository(session)
                 try:
-                    summary = await run_catalog_audit(
-                        session, claim, self.http, self.tokens, self.settings
-                    )
+                    result = await self.execute(session, claim)
                 except LostClaim:
-                    log.warning("audit.claim_lost", run_id=str(claim.id), attempt=claim.attempt)
+                    log.warning(f"{self.name}.claim_lost", run_id=str(claim.id))
                 except asyncio.CancelledError:
-                    # Shutting down: give the run back so the next worker starts it at once.
+                    # Shutting down: give the job back so the next worker starts it at once.
                     with contextlib.suppress(Exception):
                         await asyncio.shield(self._release(claim))
                     raise
                 except Exception as exc:
-                    await self._failed(audits, claim, exc)
+                    await self._failed(self.queue(session), claim, exc)
                 else:
-                    log.info(
-                        "audit.completed",
-                        run_id=str(claim.id),
-                        products=summary.products_scanned,
-                        avg_score=str(summary.avg_score),
-                    )
+                    self.completed(claim, result)
         finally:
             heartbeat.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await heartbeat
 
-    async def _failed(self, audits: AuditRepository, claim: ClaimedRun, exc: Exception) -> None:
+    def completed(self, claim: ClaimedRun, result: Any) -> None:
+        log.info(f"{self.name}.completed", run_id=str(claim.id))
+
+    async def _failed(self, queue: JobQueue, claim: ClaimedRun, exc: Exception) -> None:
         error = f"{type(exc).__name__}: {exc}"
         retry_in: timedelta | None = None
         if (
@@ -121,27 +141,45 @@ class AuditWorker:
             and claim.attempt < self.settings.audit_max_attempts
         ):
             retry_in = timedelta(seconds=self.settings.audit_retry_backoff_seconds * claim.attempt)
-        status = await audits.retry_or_fail(claim, error, retry_in=retry_in)
+        status = await queue.retry_or_fail(claim, error, retry_in=retry_in)
         log.warning(
-            "audit.attempt_failed",
+            f"{self.name}.attempt_failed",
             run_id=str(claim.id),
             attempt=claim.attempt,
             error=error,
-            next_status=status.value if status else "lost",
+            next_status=getattr(status, "value", status),
             exc_info=not isinstance(exc, PERMANENT_ERRORS),
         )
 
     async def _release(self, claim: ClaimedRun) -> None:
         async with self.db.session() as session:
-            await AuditRepository(session).release(claim)
+            await self.queue(session).release(claim)
 
     async def _heartbeat(self, claim: ClaimedRun) -> None:
         while True:
             await asyncio.sleep(self.settings.audit_heartbeat_seconds)
             try:
                 async with self.db.session() as session:
-                    if not await AuditRepository(session).heartbeat(claim):
-                        log.warning("audit.heartbeat_lost", run_id=str(claim.id))
+                    if not await self.queue(session).heartbeat(claim):
+                        log.warning(f"{self.name}.heartbeat_lost", run_id=str(claim.id))
                         return
             except Exception:
-                log.exception("audit.heartbeat_failed", run_id=str(claim.id))
+                log.exception(f"{self.name}.heartbeat_failed", run_id=str(claim.id))
+
+
+class AuditWorker(QueueWorker):
+    name = "audit"
+
+    def queue(self, session: AsyncSession) -> JobQueue:
+        return AuditRepository(session)
+
+    async def execute(self, session: AsyncSession, claim: ClaimedRun) -> Any:
+        return await run_catalog_audit(session, claim, self.http, self.tokens, self.settings)
+
+    def completed(self, claim: ClaimedRun, result: Any) -> None:
+        log.info(
+            "audit.completed",
+            run_id=str(claim.id),
+            products=result.products_scanned,
+            avg_score=str(result.avg_score),
+        )

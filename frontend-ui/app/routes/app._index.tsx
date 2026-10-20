@@ -10,7 +10,12 @@ import { boundary } from "@shopify/shopify-app-react-router/server";
 
 import { authenticate } from "../shopify.server";
 import { backend, errorMessage } from "../lib/backend.server";
-import type { CatalogOverview, RunPoint } from "../lib/types";
+import type {
+  CatalogJob,
+  CatalogOverview,
+  DiscoveryRunResults,
+  RunPoint,
+} from "../lib/types";
 import { DiscoveryScore, TopIssues } from "../components/DiscoveryScore";
 import {
   FindingsList,
@@ -57,6 +62,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       const run = await backend.startAudit(session.shop);
       return { ok: true, message: `Catalog audit ${run.status}`, error: null };
     }
+    if (intent === "discovery") {
+      await backend.startDiscoveryRun(session.shop);
+      return {
+        ok: true,
+        message: "Asking your store's search the shopper questions",
+        error: null,
+      };
+    }
     if (intent === "enrich") {
       const job = await backend.startEnrichment(session.shop, {
         lowest_readiness: 25,
@@ -81,6 +94,145 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 };
 
+function searchResults(run: CatalogJob | null) {
+  if (!run || run.status !== "completed") return null;
+  return run.results as unknown as DiscoveryRunResults;
+}
+
+const SEARCH_LABEL: Record<DiscoveryRunResults["method"], string> = {
+  storefront_mcp: "your store's Storefront MCP search, the tool AI agents call",
+  admin_search: "Shopify's product search (keyword based)",
+};
+
+function DiscoverySection({
+  overview,
+  running,
+  onRun,
+}: {
+  overview: CatalogOverview;
+  running: boolean;
+  onRun: () => void;
+}) {
+  const results = searchResults(overview.discovery_run);
+  const byQuery = new Map(
+    (results?.queries ?? []).map((q) => [`${q.schema_key}:${q.query}`, q]),
+  );
+  const failedRun = overview.discovery_run?.status === "failed";
+  return (
+    <s-section heading="Can agents answer these shopper questions?">
+      <s-stack direction="block" gap="base">
+        <s-paragraph>
+          Each question needs specific attributes. A product can answer it when
+          every one of them is filled in with a valid value. The store search
+          test asks your store each question the way an agent does and checks
+          whether those products come back.
+        </s-paragraph>
+        <s-stack direction="inline" gap="base" alignItems="center">
+          <s-button
+            onClick={onRun}
+            {...(running ? { loading: true } : {})}
+            disabled={!overview.has_audit}
+          >
+            Test with store search
+          </s-button>
+          {results && (
+            <s-text color="subdued">
+              {`Tested ${formatDate(overview.discovery_run?.finished_at ?? null)} with ${SEARCH_LABEL[results.method]}.${
+                results.avg_recall !== null
+                  ? ` On average ${Math.round(results.avg_recall * 100)}% of the products that can answer a question were in the top ${results.result_limit} results.`
+                  : ""
+              }`}
+            </s-text>
+          )}
+        </s-stack>
+        {results?.fallback_reason && (
+          <s-banner tone="info" heading="Storefront search was not reachable">
+            <s-paragraph>
+              {`The test used Shopify's keyword product search instead (${results.fallback_reason}). Password-protected development stores block the storefront search agents use.`}
+            </s-paragraph>
+          </s-banner>
+        )}
+        {failedRun && (
+          <s-banner tone="warning" heading="The store search test failed">
+            <s-paragraph>
+              {overview.discovery_run?.last_error ?? "Unknown error"}
+            </s-paragraph>
+          </s-banner>
+        )}
+        <s-table variant="auto">
+          <s-table-header-row>
+            <s-table-header listSlot="primary">Shopper question</s-table-header>
+            <s-table-header>Needs</s-table-header>
+            <s-table-header listSlot="secondary" format="numeric">
+              Products that can answer
+            </s-table-header>
+            <s-table-header listSlot="labeled">
+              Found by store search
+            </s-table-header>
+          </s-table-header-row>
+          <s-table-body>
+            {overview.discovery_tests.map((t) => {
+              const pct = t.products
+                ? Math.round((t.supported / t.products) * 100)
+                : 0;
+              const found = byQuery.get(`${t.schema_key}:${t.query}`);
+              return (
+                <s-table-row key={`${t.schema_key}:${t.query}`}>
+                  <s-table-cell>
+                    <s-stack direction="block" gap="small-300">
+                      <s-text>{`“${t.query}”`}</s-text>
+                      <s-text color="subdued">{t.schema_name}</s-text>
+                    </s-stack>
+                  </s-table-cell>
+                  <s-table-cell>{t.attributes.join(", ")}</s-table-cell>
+                  <s-table-cell>
+                    <s-badge tone={readinessTone(pct)}>
+                      {`${t.supported} of ${t.products}`}
+                    </s-badge>
+                  </s-table-cell>
+                  <s-table-cell>
+                    {found ? (
+                      <s-stack direction="block" gap="small-300">
+                        {found.error ? (
+                          <s-badge tone="warning">Search failed</s-badge>
+                        ) : found.recall === null ? (
+                          <s-text color="subdued">
+                            {`No product can answer it yet; ${found.returned} results, ${found.in_schema} in this category`}
+                          </s-text>
+                        ) : (
+                          <>
+                            <s-badge
+                              tone={readinessTone(
+                                Math.round(found.recall * 100),
+                              )}
+                            >
+                              {`${found.answerable_found} of ${Math.min(found.answerable_products, results?.result_limit ?? 10)} found`}
+                            </s-badge>
+                            <s-text color="subdued">
+                              {`${found.returned} results, ${found.in_schema} in this category`}
+                            </s-text>
+                          </>
+                        )}
+                        {found.missed_examples.length > 0 && (
+                          <s-text color="subdued">
+                            {`Missed: ${found.missed_examples.slice(0, 3).join(", ")}`}
+                          </s-text>
+                        )}
+                      </s-stack>
+                    ) : (
+                      <s-text color="subdued">Not tested yet</s-text>
+                    )}
+                  </s-table-cell>
+                </s-table-row>
+              );
+            })}
+          </s-table-body>
+        </s-table>
+      </s-stack>
+    </s-section>
+  );
+}
+
 function isActive(status: string | undefined) {
   return status === "queued" || status === "running";
 }
@@ -95,6 +247,7 @@ export default function Dashboard() {
   // Queued runs wait for a backend worker; treat them as in progress too.
   const auditRunning = isActive(summary?.run?.status);
   const enrichRunning = isActive(overview?.recent_jobs[0]?.status);
+  const discoveryRunning = isActive(overview?.discovery_run?.status);
   const busyIntent =
     fetcher.state !== "idle" ? fetcher.formData?.get("intent") : null;
   const error = fetcher.data?.error ?? backendError;
@@ -106,12 +259,12 @@ export default function Dashboard() {
 
   // Poll while background work runs so results appear without a manual refresh.
   useEffect(() => {
-    if (!auditRunning && !enrichRunning) return;
+    if (!auditRunning && !enrichRunning && !discoveryRunning) return;
     const timer = setInterval(() => {
       if (revalidator.state === "idle") revalidator.revalidate();
     }, POLL_MS);
     return () => clearInterval(timer);
-  }, [auditRunning, enrichRunning, revalidator]);
+  }, [auditRunning, enrichRunning, discoveryRunning, revalidator]);
 
   const submit = (intent: string, extra: Record<string, string> = {}) =>
     fetcher.submit({ intent, ...extra }, { method: "POST" });
@@ -174,48 +327,11 @@ export default function Dashboard() {
       )}
 
       {overview && overview.discovery_tests.length > 0 && (
-        <s-section heading="Can agents answer these shopper questions?">
-          <s-stack direction="block" gap="base">
-            <s-paragraph>
-              Each question needs specific attributes. A product supports the
-              question when every one of them is filled in with a valid value.
-            </s-paragraph>
-            <s-table variant="auto">
-              <s-table-header-row>
-                <s-table-header listSlot="primary">
-                  Shopper question
-                </s-table-header>
-                <s-table-header>Needs</s-table-header>
-                <s-table-header listSlot="secondary" format="numeric">
-                  Products that can answer
-                </s-table-header>
-              </s-table-header-row>
-              <s-table-body>
-                {overview.discovery_tests.map((t) => {
-                  const pct = t.products
-                    ? Math.round((t.supported / t.products) * 100)
-                    : 0;
-                  return (
-                    <s-table-row key={`${t.schema_key}:${t.query}`}>
-                      <s-table-cell>
-                        <s-stack direction="block" gap="small-300">
-                          <s-text>{`“${t.query}”`}</s-text>
-                          <s-text color="subdued">{t.schema_name}</s-text>
-                        </s-stack>
-                      </s-table-cell>
-                      <s-table-cell>{t.attributes.join(", ")}</s-table-cell>
-                      <s-table-cell>
-                        <s-badge tone={readinessTone(pct)}>
-                          {`${t.supported} of ${t.products}`}
-                        </s-badge>
-                      </s-table-cell>
-                    </s-table-row>
-                  );
-                })}
-              </s-table-body>
-            </s-table>
-          </s-stack>
-        </s-section>
+        <DiscoverySection
+          overview={overview}
+          running={discoveryRunning || busyIntent === "discovery"}
+          onRun={() => submit("discovery")}
+        />
       )}
 
       {overview && overview.top_findings.length > 0 && (

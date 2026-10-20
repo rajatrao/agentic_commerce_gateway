@@ -21,6 +21,7 @@ export default function App() {
         <s-link href="/app">Dashboard</s-link>
         <s-link href="/app/products">Catalog audit</s-link>
         <s-link href="/app/review">Review queue</s-link>
+        <s-link href="/app/auto-approval">Auto-approval</s-link>
         <s-link href="/app/activity">Sync and jobs</s-link>
         <s-link href="/app/schemas">Category schemas</s-link>
         <s-link href="/app/mappings">Metafield mapping</s-link>

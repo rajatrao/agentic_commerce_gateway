@@ -173,7 +173,12 @@ export default function Schemas() {
           <s-paragraph>
             A schema lists the attributes AI shopping agents need for a kind of
             product. Each product is matched to one by its product type, Shopify
-            category or keywords in its title; the rest use General.
+            category or keywords in its title; the rest use General. An
+            attribute with a Shopify taxonomy attribute (marked ↗) is also
+            written to the product&apos;s standard Shopify category metafield
+            when the product has a category with that attribute. Auto-approval
+            is set per schema on the{" "}
+            <s-link href="/app/auto-approval">Auto-approval</s-link> page.
           </s-paragraph>
           <s-table variant="auto">
             <s-table-header-row>
@@ -210,7 +215,7 @@ export default function Schemas() {
                             key={a.key}
                             tone={severityTone(a.importance)}
                           >
-                            {`${a.label}${a.required ? " *" : ""}`}
+                            {`${a.label}${a.required ? " *" : ""}${a.taxonomy_attribute ? " ↗" : ""}`}
                           </s-badge>
                         ))}
                       </s-stack>
@@ -222,6 +227,9 @@ export default function Schemas() {
                         </s-badge>
                       ) : (
                         <s-badge>Built-in</s-badge>
+                      )}
+                      {d.auto_approve?.enabled && (
+                        <s-badge tone="success">Auto-approval on</s-badge>
                       )}
                     </s-table-cell>
                     <s-table-cell>
@@ -247,7 +255,10 @@ export default function Schemas() {
               })}
             </s-table-body>
           </s-table>
-          <s-text color="subdued">* required attribute</s-text>
+          <s-text color="subdued">
+            * required attribute · ↗ also written to the Shopify category
+            metafield
+          </s-text>
         </s-stack>
       </s-section>
     </s-page>

@@ -1,7 +1,10 @@
 import { mintServiceToken, type ServiceScope } from "./jwt.server";
 import type {
   AgentClient,
+  AutoApprovalReport,
+  AutoApprovalRule,
   CatalogChange,
+  CatalogJob,
   CatalogFinding,
   CatalogOverview,
   CatalogProduct,
@@ -13,7 +16,6 @@ import type {
   ProductDetail,
   RunPoint,
   PublishPreview,
-  PublishResult,
   ReviewAction,
   ReviewResult,
   SchemaEntry,
@@ -312,12 +314,59 @@ export const backend = {
     });
   },
 
+  /** Queues a background publish job; poll `publishJob` for progress. */
   publish(shop: string, suggestionIds?: string[]) {
-    return backendRequest<PublishResult>(shop, `${CATALOG}/publish`, {
+    return backendRequest<CatalogJob>(shop, `${CATALOG}/publish`, {
       method: "POST",
       body: { suggestion_ids: suggestionIds ?? null, confirm: true },
-      timeoutMs: 180_000,
     });
+  },
+
+  publishJob(shop: string, id: string) {
+    return backendRequest<CatalogJob>(
+      shop,
+      `${CATALOG}/publish-jobs/${encodeURIComponent(id)}`,
+    );
+  },
+
+  publishJobs(shop: string, limit = 10) {
+    return backendRequest<CatalogJob[]>(
+      shop,
+      `${CATALOG}/publish-jobs?limit=${limit}`,
+    );
+  },
+
+  startDiscoveryRun(shop: string) {
+    return backendRequest<CatalogJob>(shop, `${CATALOG}/discovery-runs`, {
+      method: "POST",
+    });
+  },
+
+  discoveryRuns(shop: string, limit = 10) {
+    return backendRequest<CatalogJob[]>(
+      shop,
+      `${CATALOG}/discovery-runs?limit=${limit}`,
+    );
+  },
+
+  autoApprovalReport(shop: string) {
+    return backendRequest<AutoApprovalReport>(shop, `${CATALOG}/auto-approval`);
+  },
+
+  saveAutoApproval(shop: string, schemaKey: string, rule: AutoApprovalRule) {
+    return backendRequest<SchemaEntry>(
+      shop,
+      `${CATALOG}/schemas/${encodeURIComponent(schemaKey)}/auto-approval`,
+      { method: "PUT", body: rule },
+    );
+  },
+
+  applyAutoApproval(shop: string, schemaKey: string) {
+    return backendRequest<{ approved: number }>(
+      shop,
+      `${CATALOG}/auto-approval/${encodeURIComponent(schemaKey)}/apply`,
+      { method: "POST" },
+    );
   },
 
   catalogChanges(

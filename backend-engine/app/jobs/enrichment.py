@@ -81,7 +81,16 @@ async def run_enrichment_job(
             ai_error=ai_error,
         )
         note = f"AI unavailable, used rule-based extraction: {ai_error}" if ai_error else None
-        await repo.record_product(claim, gid, product.get("title") or "", result, None, note)
+        matched = config.schemas.get(result.schema_key)
+        await repo.record_product(
+            claim,
+            gid,
+            product.get("title") or "",
+            result,
+            None,
+            note,
+            auto_rule=matched.auto_approve if matched else None,
+        )
     await repo.finish(claim)
 
 

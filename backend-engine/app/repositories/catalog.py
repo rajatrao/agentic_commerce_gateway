@@ -9,6 +9,7 @@ from sqlmodel import col, func, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.models import (
+    AttributeSuggestion,
     AuditFinding,
     AuditRun,
     CatalogChange,
@@ -267,6 +268,22 @@ class CatalogRepository:
             )
         ).all()
         return rows, int(total)
+
+    async def change_counts_by_schema(self, merchant_id: uuid.UUID, action: str) -> dict[str, int]:
+        """How many changes of one kind were logged per category schema."""
+        rows = (
+            await self.session.exec(
+                select(AttributeSuggestion.schema_key, func.count())
+                .select_from(CatalogChange)
+                .join(
+                    AttributeSuggestion,
+                    col(AttributeSuggestion.id) == col(CatalogChange.suggestion_id),
+                )
+                .where(CatalogChange.merchant_id == merchant_id, CatalogChange.action == action)
+                .group_by(AttributeSuggestion.schema_key)
+            )
+        ).all()
+        return {str(k): int(n) for k, n in rows}
 
     async def change(self, merchant_id: uuid.UUID, change_id: int) -> CatalogChange | None:
         row = await self.session.get(CatalogChange, change_id, with_for_update=True)

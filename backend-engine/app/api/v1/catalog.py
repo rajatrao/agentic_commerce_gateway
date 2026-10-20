@@ -25,6 +25,8 @@ from app.models import (
     AuditFinding,
     AuditRun,
     CatalogChange,
+    CatalogJob,
+    CatalogJobKind,
     CatalogProduct,
     EnrichmentJob,
     Merchant,
@@ -36,9 +38,13 @@ from app.repositories.catalog_config import (
     CatalogConfigRepository,
     catalog_settings,
 )
+from app.repositories.catalog_jobs import CatalogJobRepository
 from app.repositories.enrichment import EnrichmentRepository
 from app.schemas.catalog import (
     AttributeRow,
+    AutoApprovalReport,
+    AutoApprovalSchemaOut,
+    CatalogJobOut,
     CatalogProductOut,
     CatalogProductPage,
     CatalogSettingsIn,
@@ -63,12 +69,15 @@ from app.schemas.catalog import (
 from app.services import catalog_publisher
 from app.services.catalog_schema import (
     BUILTIN_SCHEMAS,
+    AutoApproval,
     CategorySchema,
     display_value,
 )
 from app.services.metafield_writer import COMPATIBLE_TYPES, MetafieldWriter
+from app.services.product_sync import queue_refresh
 from app.services.readiness import DEFAULT_WEIGHTS
 from app.services.shopify_client import ShopifyAuthError, ShopifyError
+from app.services.taxonomy_writer import TaxonomyWriter
 
 router = APIRouter(prefix="/merchant/catalog", tags=["catalog-intelligence"])
 write = [Depends(require_service_scopes("merchant:write"))]
@@ -113,12 +122,36 @@ def _job(job: EnrichmentJob, with_results: bool = False) -> JobOut:
     )
 
 
+def _catalog_job(job: CatalogJob) -> CatalogJobOut:
+    return CatalogJobOut(
+        id=job.id,
+        kind=job.kind.value,
+        status=job.status.value,
+        source=job.source,
+        total=job.total,
+        processed=job.processed,
+        succeeded=job.succeeded,
+        failed=job.failed,
+        created_at=job.created_at,
+        finished_at=job.finished_at,
+        last_error=job.last_error,
+        results=job.results,
+    )
+
+
+def _wake_catalog_worker(request: Request) -> None:
+    worker: QueueWorker | None = getattr(request.app.state, "catalog_worker", None)
+    if worker is not None:
+        worker.wake()
+
+
 def _change(c: CatalogChange) -> ChangeOut:
     assert c.id is not None
     return ChangeOut(
         id=c.id,
         product_gid=c.product_gid,
         product_title=c.product_title,
+        suggestion_id=c.suggestion_id,
         attribute_key=c.attribute_key,
         action=c.action,
         before=c.before,
@@ -237,6 +270,11 @@ async def overview(merchant: CurrentMerchant, session: SessionDep, request: Requ
     settings = catalog_settings(merchant)
     stats = run.stats if run else {}
     changes, _ = await catalog.changes(merchant.id, limit=5)
+    jobs = CatalogJobRepository(session)
+    discovery = await jobs.active(merchant.id, CatalogJobKind.DISCOVERY) or (
+        await jobs.latest_completed(merchant.id, CatalogJobKind.DISCOVERY)
+    )
+    publishing = await jobs.active(merchant.id, CatalogJobKind.PUBLISH)
     return OverviewOut(
         has_audit=run is not None,
         products_analyzed=run.products_scanned if run else 0,
@@ -256,6 +294,8 @@ async def overview(merchant: CurrentMerchant, session: SessionDep, request: Requ
         recent_jobs=[_job(j) for j in await enrichment.list_jobs(merchant.id, 5)],
         recent_changes=[_change(c) for c in changes],
         discovery_tests=list(stats.get("discovery_tests", [])),
+        discovery_run=_catalog_job(discovery) if discovery else None,
+        publish_job=_catalog_job(publishing) if publishing else None,
     )
 
 
@@ -537,53 +577,128 @@ async def preview_publish(
 ) -> dict[str, Any]:
     """What publishing would write, read live from Shopify. Writes nothing."""
     config = await CatalogConfigRepository(session).load(merchant)
+    client = shopify_client_for(merchant, http, tokens, settings)
     try:
-        items = await catalog_publisher.preview(
+        items, category = await catalog_publisher.preview(
             session,
             merchant,
             config,
-            _writer(merchant, http, tokens, settings),
+            MetafieldWriter(client),
             body.suggestion_ids,
-            settings.publish_max_suggestions,
+            settings.publish_preview_max,
+            TaxonomyWriter(client),
         )
     except ShopifyError as exc:
         raise _shopify_error(exc) from exc
     return {
         "items": items,
+        "category_metafields": category,
         "writable": sum(1 for i in items if i["action"] in ("create", "update")),
         "unchanged": sum(1 for i in items if i["action"] == "unchanged"),
         "blocked": sum(1 for i in items if i["action"] == "blocked"),
     }
 
 
-@router.post("/publish", dependencies=write)
+@router.post(
+    "/publish",
+    response_model=CatalogJobOut,
+    status_code=status.HTTP_202_ACCEPTED,
+    dependencies=write,
+)
 async def publish(
     body: PublishRequest,
     merchant: CurrentMerchant,
     session: SessionDep,
     settings: SettingsDep,
-    http: HttpClientDep,
-    tokens: TokenProviderDep,
-) -> dict[str, Any]:
-    """Write approved suggestions to Shopify metafields. Requires `confirm: true`."""
+    request: Request,
+) -> CatalogJobOut:
+    """Queue a background job that writes approved suggestions to Shopify metafields.
+    Requires `confirm: true`. Poll `/publish-jobs/{id}` for progress."""
     if not body.confirm:
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
             "publishing changes live Shopify data; preview first and send confirm=true",
         )
-    config = await CatalogConfigRepository(session).load(merchant)
-    try:
-        return await catalog_publisher.publish(
-            session,
-            merchant,
-            config,
-            _writer(merchant, http, tokens, settings),
-            body.suggestion_ids,
-            settings.publish_max_suggestions,
+    jobs = CatalogJobRepository(session)
+    if await jobs.active(merchant.id, CatalogJobKind.PUBLISH) is not None:
+        raise HTTPException(status.HTTP_409_CONFLICT, "a publish job is already running")
+    rows, _ = await EnrichmentRepository(session).suggestions(
+        merchant.id,
+        statuses=[SuggestionStatus.APPROVED],
+        ids=body.suggestion_ids,
+        limit=settings.publish_max_suggestions,
+    )
+    if not rows:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "no approved values to publish")
+    job, _ = await jobs.create(
+        merchant.id,
+        CatalogJobKind.PUBLISH,
+        params={"suggestion_ids": [str(r.id) for r in rows]},
+        total=len(rows),
+    )
+    _wake_catalog_worker(request)
+    return _catalog_job(job)
+
+
+@router.get("/publish-jobs", response_model=list[CatalogJobOut])
+async def list_publish_jobs(
+    merchant: CurrentMerchant, session: SessionDep, limit: int = Query(20, ge=1, le=100)
+) -> list[CatalogJobOut]:
+    rows = await CatalogJobRepository(session).recent(merchant.id, CatalogJobKind.PUBLISH, limit)
+    return [_catalog_job(j) for j in rows]
+
+
+@router.get("/publish-jobs/{job_id}", response_model=CatalogJobOut)
+async def get_publish_job(
+    job_id: uuid.UUID, merchant: CurrentMerchant, session: SessionDep
+) -> CatalogJobOut:
+    job = await CatalogJobRepository(session).get(merchant.id, job_id)
+    if job is None or job.kind is not CatalogJobKind.PUBLISH:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "job not found")
+    return _catalog_job(job)
+
+
+# ----------------------------------------------------------------- discovery search tests
+
+
+@router.post(
+    "/discovery-runs",
+    response_model=CatalogJobOut,
+    status_code=status.HTTP_202_ACCEPTED,
+    dependencies=write,
+)
+async def start_discovery_run(
+    merchant: CurrentMerchant, session: SessionDep, request: Request
+) -> CatalogJobOut:
+    """Ask the store's search each schema's shopper questions and measure what comes back."""
+    if await CatalogRepository(session).active_product_count(merchant.id) == 0:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT, "run a catalog audit first so products are known"
         )
-    except ShopifyError as exc:
-        await session.rollback()
-        raise _shopify_error(exc) from exc
+    jobs = CatalogJobRepository(session)
+    if await jobs.active(merchant.id, CatalogJobKind.DISCOVERY) is not None:
+        raise HTTPException(status.HTTP_409_CONFLICT, "a discovery test is already running")
+    job, _ = await jobs.create(merchant.id, CatalogJobKind.DISCOVERY)
+    _wake_catalog_worker(request)
+    return _catalog_job(job)
+
+
+@router.get("/discovery-runs", response_model=list[CatalogJobOut])
+async def list_discovery_runs(
+    merchant: CurrentMerchant, session: SessionDep, limit: int = Query(10, ge=1, le=50)
+) -> list[CatalogJobOut]:
+    rows = await CatalogJobRepository(session).recent(merchant.id, CatalogJobKind.DISCOVERY, limit)
+    return [_catalog_job(j) for j in rows]
+
+
+@router.get("/discovery-runs/{job_id}", response_model=CatalogJobOut)
+async def get_discovery_run(
+    job_id: uuid.UUID, merchant: CurrentMerchant, session: SessionDep
+) -> CatalogJobOut:
+    job = await CatalogJobRepository(session).get(merchant.id, job_id)
+    if job is None or job.kind is not CatalogJobKind.DISCOVERY:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "run not found")
+    return _catalog_job(job)
 
 
 @router.get("/changes", response_model=ChangePage)
@@ -613,6 +728,7 @@ async def revert_change(
     settings: SettingsDep,
     http: HttpClientDep,
     tokens: TokenProviderDep,
+    request: Request,
 ) -> ChangeOut:
     try:
         row = await catalog_publisher.revert(
@@ -624,6 +740,8 @@ async def revert_change(
     except ShopifyError as exc:
         await session.rollback()
         raise _shopify_error(exc) from exc
+    await queue_refresh(session, merchant.id, row.product_gid, "revert")
+    _wake_catalog_worker(request)
     return _change(row)
 
 
@@ -656,6 +774,75 @@ async def reset_schema(key: str, merchant: CurrentMerchant, session: SessionDep)
     is removed."""
     if not await CatalogConfigRepository(session).reset_schema(merchant.id, key):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "no customized schema with that key")
+
+
+# ----------------------------------------------------------------- auto-approval
+
+
+@router.get("/auto-approval", response_model=AutoApprovalReport)
+async def auto_approval_report(
+    merchant: CurrentMerchant, session: SessionDep
+) -> AutoApprovalReport:
+    """Each schema's rule, what it would approve among pending suggestions now (and what
+    blocks the rest), and the values approved automatically so far."""
+    config = await CatalogConfigRepository(session).load(merchant)
+    preview = await catalog_publisher.auto_approval_preview(session, merchant, config)
+    catalog = CatalogRepository(session)
+    totals = await catalog.change_counts_by_schema(merchant.id, "auto_approve")
+    recent, _ = await catalog.changes(merchant.id, actions=["auto_approve"], limit=50)
+    ids = [c.suggestion_id for c in recent if c.suggestion_id]
+    current, _ = await EnrichmentRepository(session).suggestions(
+        merchant.id, ids=ids, limit=len(ids) or 1
+    )
+    return AutoApprovalReport(
+        schemas=[
+            AutoApprovalSchemaOut(
+                schema_key=key,
+                schema_name=schema.name,
+                rule=schema.auto_approve,
+                attributes=[a.key for a in schema.attributes],
+                pending=preview.get(key, {}).get("pending", 0),
+                qualifying=preview.get(key, {}).get("qualifying", 0),
+                blocked_by=preview.get(key, {}).get("blocked_by", {}),
+                auto_approved_total=totals.get(key, 0),
+            )
+            for key, schema in config.schemas.items()
+        ],
+        recent=[_change(c) for c in recent],
+        statuses={str(s.id): s.status.value for s in current},
+    )
+
+
+@router.put("/schemas/{key}/auto-approval", response_model=SchemaOut, dependencies=write)
+async def put_auto_approval(
+    key: str, body: AutoApproval, merchant: CurrentMerchant, session: SessionDep
+) -> SchemaOut:
+    """Turn auto-approval on or off for one schema, or change its threshold and attributes."""
+    repo = CatalogConfigRepository(session)
+    schema = (await repo.schemas(merchant.id)).get(key)
+    if schema is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "no schema with that key")
+    try:
+        updated = CategorySchema.model_validate(
+            schema.model_dump(mode="json") | {"auto_approve": body.model_dump(mode="json")}
+        )
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
+    await repo.save_schema(merchant.id, updated)
+    return SchemaOut(key=key, customized=True, builtin=key in BUILTIN_KEYS, definition=updated)
+
+
+@router.post("/auto-approval/{key}/apply", dependencies=write)
+async def apply_auto_approval(
+    key: str, merchant: CurrentMerchant, session: SessionDep
+) -> dict[str, int]:
+    """Apply an enabled rule to the schema's pending suggestions now."""
+    config = await CatalogConfigRepository(session).load(merchant)
+    try:
+        approved = await catalog_publisher.auto_approve_pending(session, merchant, config, key)
+    except catalog_publisher.ReviewError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    return {"approved": approved}
 
 
 def _attribute_index(config: CatalogConfig) -> dict[str, tuple[str, list[str]]]:
@@ -764,9 +951,10 @@ def _settings_out(merchant: Merchant, request: Request) -> CatalogSettingsOut:
         ai_model=getattr(enricher, "model", None),
         auto_publish=False,
         auto_publish_note=(
-            "Every change is reviewed before it reaches Shopify. Automatic publishing is not "
-            "available: it would need per-attribute confidence thresholds, an audit trail "
-            "reviewed by the merchant, and an opt-in per schema before it could be offered."
+            "Nothing is written to Shopify without your confirmation. Each category schema can "
+            "opt in to auto-approval of high-confidence values that rule-based extraction "
+            "confirms; those still go through the write preview, and the auto-approval report "
+            "lists every one."
         ),
     )
 

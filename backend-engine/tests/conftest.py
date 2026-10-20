@@ -47,6 +47,7 @@ def app_env(database_url: str) -> Iterator[None]:
         # Retry failed audits at once and poll the queue quickly, so tests do not sleep.
         AUDIT_POLL_SECONDS="0.05",
         AUDIT_RETRY_BACKOFF_SECONDS="0",
+        REFRESH_DELAY_SECONDS="0",
     )
     from app.core.config import get_settings
 

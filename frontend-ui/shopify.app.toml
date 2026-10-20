@@ -1,6 +1,6 @@
 # Shopify app configuration. Run `npm run config:link` on your machine to fill in
 # client_id / application_url for your Partner app.
-client_id = ""
+client_id = "cf510b5aed1171f652f789436eefad21"
 name = "Agentic Commerce Gateway"
 application_url = "https://example.com"
 embedded = true

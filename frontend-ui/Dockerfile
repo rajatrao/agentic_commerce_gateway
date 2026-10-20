@@ -13,14 +13,14 @@ COPY prisma ./prisma
 RUN --mount=type=cache,target=/root/.npm npm ci --no-audit --no-fund
 
 # ---------------------------------------------------------------- dev
+# Used by docker-compose. Includes the Shopify CLI, so `shopify app dev` (Partner login,
+# tunnel, install on the dev store) runs inside the container: no Node needed on the host.
 FROM deps AS dev
+RUN --mount=type=cache,target=/root/.npm npm install -g --no-audit --no-fund @shopify/cli@4.9.4
 COPY . .
 RUN npx prisma generate
-ENV PORT=3000
-EXPOSE 3000
-# Applies Prisma migrations, then serves the app with Vite HMR.
-# Use `shopify app dev` on your machine for the tunnel + Partner login (see README).
-CMD ["sh", "-c", "npx prisma migrate deploy && npx react-router dev --host 0.0.0.0 --port 3000"]
+# Starts the CLI's dev session, which runs the app with the command in shopify.web.toml.
+CMD ["shopify", "app", "dev"]
 
 # ---------------------------------------------------------------- build
 FROM deps AS build

@@ -37,7 +37,8 @@ if (host === "localhost") {
 
 export default defineConfig({
   server: {
-    allowedHosts: [host],
+    // "frontend" is the docker compose service name backend-engine calls.
+    allowedHosts: [host, "frontend"],
     cors: {
       preflightContinue: true,
     },

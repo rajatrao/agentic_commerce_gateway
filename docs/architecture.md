@@ -28,7 +28,7 @@ agentic_commerce_gateway/
 ├── docker-compose.yml            # local dev: postgres + backend + frontend (hot reload)
 ├── docker-compose.prod.yml       # local smoke test of the production images
 ├── .dockerignore
-├── .env.example                  # shared var names; each app has its own .env
+├── .env.example                  # variable names; docker compose reads ./.env for both apps
 ├── .github/workflows/ci.yml      # lint + test both stacks
 ├── docs/
 │   ├── architecture.md

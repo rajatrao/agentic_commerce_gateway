@@ -1,7 +1,9 @@
-# Local development stack: Postgres + backend-engine + frontend-ui, with hot reload.
-#   make keys            # once: generates .env with the Ed25519 + Fernet keys
-#   docker compose up    # http://localhost:8000/docs (API), http://localhost:3000 (app)
-#   make up-ollama       # same, plus a local Ollama server running Qwen for AI enrichment
+# Local development stack. Everything runs in Docker; see README "Local development".
+#   docker compose run --rm keys                          # once: writes the keys to .env
+#   docker compose up -d                                  # Postgres + backend-engine (:8000/docs)
+#   docker compose run --rm frontend shopify app config link   # once: link your Partner app
+#   docker compose run --rm --use-aliases frontend        # Shopify app on your dev store
+#   AI_PROVIDER=ollama docker compose --profile ollama up -d   # optional: local Qwen model
 
 name: agentic-commerce-gateway
 
@@ -42,7 +44,7 @@ services:
       SHOPIFY_API_SECRET: ${SHOPIFY_API_SECRET:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       # AI enrichment provider: anthropic | ollama | openai_compatible (empty: anthropic when a
-      # key is set, otherwise rules only). `make up-ollama` sets ollama.
+      # key is set, otherwise rules only). Set AI_PROVIDER=ollama to use the ollama profile.
       AI_PROVIDER: ${AI_PROVIDER:-}
       AI_MODEL: ${AI_MODEL:-}
       AI_BASE_URL: ${AI_BASE_URL:-http://ollama:11434}
@@ -62,10 +64,16 @@ services:
       timeout: 5s
       retries: 10
 
+  # The Shopify app. Runs `shopify app dev` (Shopify CLI is in the image), which logs in to your
+  # Partner account, opens the tunnel, installs the app on your dev store and serves it on
+  # port 3000. Interactive, so it is started with `docker compose run` instead of `up`.
   frontend:
     build:
       context: ./frontend-ui
       target: dev
+    profiles: ["app"]
+    stdin_open: true
+    tty: true
     env_file:
       - path: .env
         required: false
@@ -75,22 +83,29 @@ services:
       BACKEND_PUBLIC_URL: ${BACKEND_PUBLIC_URL:-http://localhost:8000}
       JWT_PRIVATE_KEY: ${JWT_PRIVATE_KEY:-}
       BACKEND_JWT_PUBLIC_KEY: ${BACKEND_JWT_PUBLIC_KEY:-}
-      SHOPIFY_API_KEY: ${SHOPIFY_API_KEY:-}
-      SHOPIFY_API_SECRET: ${SHOPIFY_API_SECRET:-}
-      SHOPIFY_APP_URL: ${SHOPIFY_APP_URL:-http://localhost:3000}
-      SCOPES: write_products,write_metaobjects,read_inventory,read_themes,write_draft_orders,read_shipping,read_orders
-    ports:
-      - "3000:3000"
     volumes:
-      - ./frontend-ui/app:/app/app
-      - ./frontend-ui/prisma:/app/prisma
+      # The whole app, so `config link` and `deploy` update shopify.app.toml on your machine.
+      - ./frontend-ui:/app
+      # Keeps the image's Linux node_modules instead of the (absent) host folder.
+      - /app/node_modules
+      # Shopify CLI login, so you only sign in once.
+      - shopify-cli:/root
     depends_on:
       postgres:
         condition: service_healthy
       backend:
         condition: service_healthy
 
-  # Local LLM for AI enrichment. Only started with the "ollama" profile (make up-ollama).
+  # Writes the Ed25519 + Fernet keys to ./.env (`docker compose run --rm keys`, add --force to rotate).
+  keys:
+    image: node:22-alpine
+    profiles: ["tools"]
+    working_dir: /work
+    volumes:
+      - .:/work
+    entrypoint: ["node", "scripts/generate-keys.mjs"]
+
+  # Local LLM for AI enrichment. Only started with the "ollama" profile.
   # Runs on CPU; on a machine with an NVIDIA GPU, add a `deploy.resources` GPU reservation.
   ollama:
     image: ollama/ollama:0.9.6
@@ -120,3 +135,4 @@ services:
 volumes:
   pgdata:
   ollama:
+  shopify-cli:

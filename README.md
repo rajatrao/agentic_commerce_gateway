@@ -22,50 +22,43 @@ Both services share one Postgres database. Prisma owns the `shopify_app` schema 
 
 ## Local development
 
-Prerequisites: Docker Desktop (or OrbStack), Node 22, [uv](https://docs.astral.sh/uv/), and the [Shopify CLI](https://shopify.dev/docs/api/shopify-cli) logged into your Partner account.
+Everything runs in Docker. The only thing you install is Docker Desktop (or OrbStack). You also need a Shopify Partner account with a development store.
+
+**First time only**
 
 ```bash
-make keys                 # writes JWT + encryption keys to ./.env (gitignored)
-docker compose up --build # Postgres :5432, backend-engine :8000 (/docs), frontend-ui :3000
+docker compose run --rm keys                                  # writes the service keys to ./.env
+docker compose run --rm frontend shopify app config link      # sign in to Shopify, pick or create your app
 ```
 
-To run catalog enrichment against a local model instead, use `make up-ollama`. It starts the same stack plus an Ollama container on :11434, pulls `qwen3:8b` on first run (about 5 GB, cached in the `ollama` volume) and sets `AI_PROVIDER=ollama`. Set `AI_MODEL` in `.env` to pull a different model, for example `qwen3:4b` on a machine with less memory. Docker Desktop on macOS cannot use the GPU, so if Ollama is installed natively you may prefer running it there and pointing `AI_BASE_URL` at `http://host.docker.internal:11434`.
+`config link` prints a link and a code: open the link, sign in to your Partner account and enter the code. Then choose your app (or create one). It writes the app's id into `frontend-ui/shopify.app.toml`. Your Shopify login is kept in a Docker volume, so you sign in once.
 
-To run backend-engine outside Docker, from a Python virtual environment (useful for debugging and IDEs):
+Then run `docker compose run --rm frontend shopify app env show` and copy `SHOPIFY_API_KEY` and `SHOPIFY_API_SECRET` into `./.env`. backend-engine uses them to verify Shopify webhooks.
+
+**Every time**
 
 ```bash
-make keys                        # if you have not already: writes ./.env
-docker compose up -d postgres    # Postgres still runs in Docker
-cd backend-engine
-uv sync                          # creates .venv: Python 3.12 + app and dev dependencies
-uv run --env-file ../.env alembic upgrade head
-uv run --env-file ../.env uvicorn app.main:app --reload --port 8000
+docker compose up -d                                          # Postgres :5432 and backend-engine :8000 (API docs at /docs)
+docker compose run --rm --use-aliases frontend                # the Shopify app, on your dev store
 ```
 
-Point your editor at `backend-engine/.venv/bin/python`, or `source backend-engine/.venv/bin/activate` to use `pytest`, `alembic` and `ruff` directly. Without uv: `cd backend-engine && python3.12 -m venv .venv && .venv/bin/pip install -r requirements.txt -r requirements-dev.txt`. Stop the `backend` container first if it is running, since both use port 8000.
+The second command runs `shopify app dev` inside the container. The first time it asks which dev store to use. It opens a secure tunnel, installs the app on the store and prints a preview link. Open that link to use the app inside Shopify admin. Keep it running while you work and press `q` (or Ctrl+C) to stop. `--use-aliases` lets backend-engine reach the app at `frontend:3000`.
 
-To open the app inside Shopify admin, run the Shopify CLI from `frontend-ui/` on your machine (it creates the tunnel and handles Partner login):
-
-```bash
-cd frontend-ui
-npm install
-npm run config:link       # first time only: links shopify.app.toml to your Partner app
-cp .env.example .env      # paste JWT_PRIVATE_KEY from ../.env
-docker compose up -d postgres backend   # from the repo root
-npm run dev               # shopify app dev
-```
-
-`shopify app dev` installs the app on your dev store. The `afterAuth` hook registers the shop with backend-engine, after which the dashboard's **Run installation check** button works.
+Database migrations run automatically when the containers start. Code changes reload automatically. After changing `package.json` or `pyproject.toml`, add `--build` to rebuild the images. `docker compose down` stops everything.
 
 Then enable the theme app extension: Online Store > Themes > Customize, add the **Agentic Product Schema** block to the product template and turn on the **Agentic Store Schema** app embed.
+
+**Optional: local AI model.** To run catalog enrichment with a local model instead of a hosted one, start the stack with `AI_PROVIDER=ollama docker compose --profile ollama up -d`. It adds an Ollama container on :11434 and pulls `qwen3:8b` on first run (about 5 GB, kept in the `ollama` volume). Set `AI_MODEL` in `.env` to pull a different model, for example `qwen3:4b` on a machine with less memory.
 
 ### Tests
 
 ```bash
 docker compose up -d postgres
-make test        # backend: pytest against Postgres; frontend: vitest
-make lint        # ruff, mypy, eslint, tsc
-make prod-smoke  # build and run the production images locally
+docker compose run --rm -e TEST_DATABASE_URL=postgresql://gateway:gateway@postgres:5432/gateway_test backend pytest
+docker compose run --rm backend sh -c "ruff check . && ruff format --check . && mypy app"
+docker compose run --rm frontend npm test
+docker compose run --rm frontend sh -c "npm run lint && npm run typecheck"
+docker compose -f docker-compose.prod.yml up --build          # build and run the production images locally
 ```
 
 ## Deploying to Railway
@@ -76,7 +69,7 @@ One Railway project, three services. Each app service has a `railway.json` (conf
 2. **backend-engine**: New service from this GitHub repo, root directory `/backend-engine`. Variables:
    - `DATABASE_URL=${{Postgres.DATABASE_URL}}`
    - `HOST=::` (Railway's private network is IPv6)
-   - `JWT_PUBLIC_KEY`, `BACKEND_JWT_PRIVATE_KEY`, `TOKEN_ENCRYPTION_KEY` (from `make keys`)
+   - `JWT_PUBLIC_KEY`, `BACKEND_JWT_PRIVATE_KEY`, `TOKEN_ENCRYPTION_KEY` (from `./.env`, written by `docker compose run --rm keys`)
    - `FRONTEND_INTERNAL_URL=http://${{frontend-ui.RAILWAY_PRIVATE_DOMAIN}}:${{frontend-ui.PORT}}`
    - `SHOPIFY_API_KEY`, `SHOPIFY_API_SECRET`
    - `PUBLIC_BASE_URL=https://<backend public domain>` (used in the UCP discovery profile)
@@ -85,11 +78,11 @@ One Railway project, three services. Each app service has a `railway.json` (conf
 3. **frontend-ui**: New service from this repo, root directory `/frontend-ui`. Variables:
    - `DATABASE_URL=${{Postgres.DATABASE_URL}}?schema=shopify_app`
    - `BACKEND_INTERNAL_URL=http://${{backend-engine.RAILWAY_PRIVATE_DOMAIN}}:${{backend-engine.PORT}}`
-   - `JWT_PRIVATE_KEY`, `BACKEND_JWT_PUBLIC_KEY` (from `make keys`)
+   - `JWT_PRIVATE_KEY`, `BACKEND_JWT_PUBLIC_KEY` (from `./.env`, written by `docker compose run --rm keys`)
    - `SHOPIFY_API_KEY`, `SHOPIFY_API_SECRET`, `SCOPES` (same as `shopify.app.toml`)
    - `SHOPIFY_APP_URL=https://<frontend public domain>`
    - `BACKEND_PUBLIC_URL=https://<backend public domain>` (shown to merchants on the Agent access page)
-   - Generate a public domain, then set it as `application_url` and the auth redirect in `shopify.app.toml` and run `npm run deploy`.
+   - Generate a public domain, then set it as `application_url` and the auth redirect in `shopify.app.toml` and run `docker compose run --rm frontend shopify app deploy`.
 
 Pushes to `main` redeploy only the service whose folder changed. Migrations run in each service's pre-deploy step (`alembic upgrade head`, `prisma migrate deploy`).
 

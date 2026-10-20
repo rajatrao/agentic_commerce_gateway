@@ -197,6 +197,12 @@ class AcpAdapter(ProtocolAdapter):
                     "continue_url.",
                 }
             )
+        if cart.order_gid:
+            body["order"] = {
+                "id": cart.order_gid,
+                "checkout_session_id": str(cart.id),
+                **({"permalink_url": cart.order_status_url} if cart.order_status_url else {}),
+            }
         if cart.shipping_rate_handle:
             body["fulfillment_option_id"] = cart.shipping_rate_handle
         if cart.buyer:

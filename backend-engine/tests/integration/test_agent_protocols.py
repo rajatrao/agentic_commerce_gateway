@@ -411,4 +411,4 @@ def test_merchant_sees_agent_checkouts(client: TestClient, shopify: FakeShopify)
     other = new_shop()
     install(client, other)
     page = client.get("/api/v1/merchant/agent-checkouts", headers=auth(other)).json()
-    assert page == {"total": 0, "items": []}  # each store sees only its own carts
+    assert page == {"total": 0, "ordered": 0, "items": []}  # each store sees only its own carts

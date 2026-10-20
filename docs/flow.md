@@ -64,12 +64,13 @@ flowchart TD
     E6 --> E7["Agent sends buyer the link<br/>ACP continue_url, UCP requires_escalation"]
     E7 --> E8["Buyer pays on the store's<br/>own Shopify checkout"]
     E8 --> E9(["Normal Shopify order<br/>cart attribute _agentic_cart_id"])
+    E9 --> E10["orders/create webhook<br/>cart completed + order id<br/>no customer data stored"]
   end
 
   %% ================= 6. After the order =================
   subgraph S6["6 · Merchant follows up"]
     direction TB
-    F1["Agent checkouts page:<br/>every agent cart + checkout link"] --> F2["Fulfil in Shopify as usual"]
+    F1["Agent checkouts page:<br/>every agent cart, link, order"] --> F2["Fulfil in Shopify as usual"]
     F3["Uninstall or GDPR webhooks<br/>HMAC verified, de-duplicated"] --> F4["Merchant marked uninstalled,<br/>token wiped, keys stop working"]
   end
 
@@ -84,4 +85,5 @@ flowchart TD
   D4 --> E1
   E6 --> F1
   E9 --> F2
+  E10 --> F1
 ```

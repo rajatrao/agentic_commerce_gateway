@@ -227,6 +227,11 @@ class UcpAdapter(ProtocolAdapter):
                     "severity": "requires_buyer_review",
                 }
             )
+        if cart.order_gid:
+            body["order"] = {
+                "id": cart.order_gid,
+                **({"permalink_url": cart.order_status_url} if cart.order_status_url else {}),
+            }
         if cart.expires_at:
             body["expires_at"] = cart.expires_at.isoformat()
         if b := cart.buyer:

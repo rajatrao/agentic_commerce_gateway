@@ -12,7 +12,7 @@ const STATUS: Record<
 > = {
   ready: { label: "Sent to checkout", tone: "success" },
   open: { label: "Building cart", tone: "info" },
-  completed: { label: "Completed", tone: "success" },
+  completed: { label: "Ordered", tone: "success" },
   canceled: { label: "Canceled", tone: "warning" },
   expired: { label: "Expired", tone: "warning" },
 };
@@ -34,7 +34,9 @@ export default function Checkouts() {
 
   return (
     <s-page heading="Agent checkouts">
-      <s-section heading={`Carts built by agents (${checkouts.total})`}>
+      <s-section
+        heading={`Carts built by agents (${checkouts.total}, ${checkouts.ordered} ordered)`}
+      >
         {checkouts.items.length === 0 ? (
           <s-paragraph>
             No agent carts yet. When an agent builds a cart, it appears here
@@ -47,6 +49,7 @@ export default function Checkouts() {
               <s-table-header listSlot="secondary">Status</s-table-header>
               <s-table-header format="numeric">Items</s-table-header>
               <s-table-header format="numeric">Total</s-table-header>
+              <s-table-header>Order</s-table-header>
               <s-table-header>Updated</s-table-header>
             </s-table-header-row>
             <s-table-body>
@@ -60,6 +63,15 @@ export default function Checkouts() {
                   </s-table-cell>
                   <s-table-cell>{c.item_count}</s-table-cell>
                   <s-table-cell>{money(c.total, c.currency)}</s-table-cell>
+                  <s-table-cell>
+                    {c.order_admin_url ? (
+                      <s-link href={c.order_admin_url} target="_blank">
+                        {c.order_name ?? "View order"}
+                      </s-link>
+                    ) : (
+                      "Not yet"
+                    )}
+                  </s-table-cell>
                   <s-table-cell>
                     {new Date(c.updated_at).toLocaleString()}
                   </s-table-cell>
@@ -77,9 +89,9 @@ export default function Checkouts() {
           work exactly as they do for any other order.
         </s-paragraph>
         <s-paragraph>
-          Paid orders appear in Orders. Each one carries a hidden
-          &quot;_agentic_cart_id&quot; attribute that links it back to the agent
-          cart.
+          Paid orders appear in Orders like any other. Each one carries a hidden
+          &quot;_agentic_cart_id&quot; attribute, so it is linked back to its
+          agent cart here automatically.
         </s-paragraph>
       </s-section>
     </s-page>

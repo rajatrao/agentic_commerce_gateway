@@ -44,10 +44,16 @@ class AgentCheckoutOut(BaseModel):
     total: Decimal
     currency: str
     checkout_url: str | None
+    # Set once the buyer places the order on Shopify checkout.
+    order_name: str | None
+    order_admin_url: str | None
+    ordered_at: datetime | None
     created_at: datetime
     updated_at: datetime
 
 
 class AgentCheckoutPage(BaseModel):
     total: int
+    # How many of this store's agent carts became Shopify orders.
+    ordered: int
     items: list[AgentCheckoutOut]

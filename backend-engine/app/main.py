@@ -40,7 +40,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if settings.audit_worker_enabled:
         app.state.audit_worker = worker
         worker.start()
-    app.state.enricher = enricher_from_settings(settings)
+    enricher = app.state.enricher = enricher_from_settings(settings)
     enrichment = EnrichmentWorker(
         app.state.db, app.state.http_client, app.state.shopify_tokens, settings, app.state.enricher
     )
@@ -53,6 +53,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     finally:
         await enrichment.stop()
         await worker.stop()
+        if enricher is not None:
+            await enricher.aclose()
         await app.state.http_client.aclose()
         await app.state.db.dispose()
 

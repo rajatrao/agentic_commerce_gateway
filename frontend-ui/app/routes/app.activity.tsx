@@ -262,7 +262,7 @@ function JobRow({
           <s-badge tone={STATUS_TONES[job.status]}>{job.status}</s-badge>
           <s-text type="strong">{formatDate(job.created_at)}</s-text>
           <s-text color="subdued">
-            {`${job.succeeded} of ${job.total} products done${job.failed ? `, ${job.failed} failed` : ""} · ${job.use_ai ? "rules and Claude" : "rules only"}`}
+            {`${job.succeeded} of ${job.total} products done${job.failed ? `, ${job.failed} failed` : ""} · ${job.use_ai ? "rules and AI" : "rules only"}`}
           </s-text>
           {(job.failed > 0 || job.status === "failed") &&
             !active(job.status) && (

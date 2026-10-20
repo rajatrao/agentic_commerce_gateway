@@ -317,8 +317,8 @@ function SetupGuide({
       done: overview.recent_jobs.length > 0,
       label: "Generate attribute suggestions",
       detail: overview.ai_enabled
-        ? "Reads each product's own text with rules and Claude, keeping the quote behind every value."
-        : "Reads each product's own text with rules. Add an Anthropic API key to also use Claude.",
+        ? "Reads each product's own text with rules and AI, keeping the quote behind every value."
+        : "Reads each product's own text with rules. Configure an AI provider on the engine to also use AI.",
       href: "/app/products",
     },
     {

@@ -401,6 +401,7 @@ export interface CatalogSettings {
   default_weights: Record<string, number>;
   ready_threshold: number;
   ai_enabled: boolean;
+  ai_provider: string | null;
   ai_model: string | null;
   auto_publish: boolean;
   auto_publish_note: string;

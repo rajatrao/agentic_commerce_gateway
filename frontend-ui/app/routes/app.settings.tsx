@@ -170,14 +170,14 @@ export default function Settings() {
       <s-section heading="AI enrichment">
         <s-stack direction="block" gap="small-200">
           {settings.ai_enabled ? (
-            <s-badge tone="success">{`Claude enabled (${settings.ai_model})`}</s-badge>
+            <s-badge tone="success">{`AI enabled: ${settings.ai_provider ?? "model"} (${settings.ai_model})`}</s-badge>
           ) : (
             <s-badge tone="neutral">Rules only</s-badge>
           )}
           <s-paragraph>
             {settings.ai_enabled
-              ? "Suggestions combine deterministic rules with Claude. Claude only sees the product's own content, treats it as data, and must quote the text behind every value. The engine checks each quote against the product before showing it."
-              : "Suggestions come from deterministic rules that read the product's own title, description, tags and options. Set ANTHROPIC_API_KEY on the gateway engine to also use Claude."}
+              ? "Suggestions combine deterministic rules with an AI model. The model only sees the product's own content, treats it as data, and must quote the text behind every value. The engine checks each quote against the product before showing it."
+              : "Suggestions come from deterministic rules that read the product's own title, description, tags and options. Set AI_PROVIDER on the gateway engine (anthropic, ollama or openai_compatible) to also use an AI model."}
           </s-paragraph>
         </s-stack>
       </s-section>

@@ -760,6 +760,7 @@ def _settings_out(merchant: Merchant, request: Request) -> CatalogSettingsOut:
         default_weights=DEFAULT_WEIGHTS,
         ready_threshold=values["ready_threshold"],
         ai_enabled=enricher is not None,
+        ai_provider=getattr(enricher, "provider", None),
         ai_model=getattr(enricher, "model", None),
         auto_publish=False,
         auto_publish_note=(

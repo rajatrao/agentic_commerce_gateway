@@ -13,7 +13,8 @@ const EDITABLE: Suggestion["status"][] = ["pending", "approved", "failed"];
 
 function methodLabel(method: string) {
   const edited = method.includes("merchant_edit") ? " (edited)" : "";
-  if (method.startsWith("llm")) return `Claude${edited}`;
+  if (method.startsWith("llm:")) return `AI (${method.slice(4).split("+")[0]})${edited}`;
+  if (method.startsWith("llm")) return `AI${edited}`;
   if (method.startsWith("rule")) return `Rules${edited}`;
   if (method === "unknown") return "Not found";
   return `${method}${edited}`;

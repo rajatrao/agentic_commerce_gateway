@@ -164,7 +164,7 @@ export default function ProductDetail() {
             until you approve it and confirm the write.
           </s-paragraph>
           <s-checkbox
-            label="Use Claude when generating suggestions"
+            label="Use AI when generating suggestions"
             checked={useAi}
             disabled={!aiEnabled}
             onChange={(e) => setUseAi(e.currentTarget.checked)}

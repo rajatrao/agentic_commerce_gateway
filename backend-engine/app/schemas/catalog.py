@@ -230,6 +230,7 @@ class CatalogSettingsOut(BaseModel):
     default_weights: dict[str, int]
     ready_threshold: int
     ai_enabled: bool
+    ai_provider: str | None = None
     ai_model: str | None
     auto_publish: bool = False
     auto_publish_note: str

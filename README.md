@@ -29,6 +29,8 @@ make keys                 # writes JWT + encryption keys to ./.env (gitignored)
 docker compose up --build # Postgres :5432, backend-engine :8000 (/docs), frontend-ui :3000
 ```
 
+To run catalog enrichment against a local model instead, use `make up-ollama`. It starts the same stack plus an Ollama container on :11434, pulls `qwen3:8b` on first run (about 5 GB, cached in the `ollama` volume) and sets `AI_PROVIDER=ollama`. Set `AI_MODEL` in `.env` to pull a different model, for example `qwen3:4b` on a machine with less memory. Docker Desktop on macOS cannot use the GPU, so if Ollama is installed natively you may prefer running it there and pointing `AI_BASE_URL` at `http://host.docker.internal:11434`.
+
 To open the app inside Shopify admin, run the Shopify CLI from `frontend-ui/` on your machine (it creates the tunnel and handles Partner login):
 
 ```bash
@@ -65,7 +67,7 @@ One Railway project, three services. Each app service has a `railway.json` (conf
    - `FRONTEND_INTERNAL_URL=http://${{frontend-ui.RAILWAY_PRIVATE_DOMAIN}}:${{frontend-ui.PORT}}`
    - `SHOPIFY_API_KEY`, `SHOPIFY_API_SECRET`
    - `PUBLIC_BASE_URL=https://<backend public domain>` (used in the UCP discovery profile)
-   - Optional: `ANTHROPIC_API_KEY` to add Claude to catalog enrichment (`AI_MODEL` defaults to `claude-opus-5-5`, `AI_EFFORT` to `medium`). Without it, enrichment uses rules only.
+   - Optional: an AI provider for catalog enrichment. `AI_PROVIDER` is `anthropic` (with `ANTHROPIC_API_KEY`), `ollama` or `openai_compatible` (with `AI_BASE_URL`, `AI_MODEL` and `AI_API_KEY`). Leaving `AI_PROVIDER` empty uses Anthropic when `ANTHROPIC_API_KEY` is set. Without a provider, enrichment uses rules only.
    - Generate a public domain: agents and Shopify must reach `llm.txt`, protocol and webhook routes.
 3. **frontend-ui**: New service from this repo, root directory `/frontend-ui`. Variables:
    - `DATABASE_URL=${{Postgres.DATABASE_URL}}?schema=shopify_app`
@@ -90,7 +92,7 @@ The admin app audits each product against the attributes AI shopping agents need
 2. **Category schemas.** Built-in schemas (backpacks, tents, sleeping bags, outerwear, footwear, general) list each attribute's type, unit, allowed values, importance and default metafield. Products match by product type, Shopify category or title keywords. Merchants can edit or add schemas on the **Category schemas** page.
 3. **Audit findings.** Rule-based findings (`attribute_missing`, `attribute_buried`, `attribute_invalid`, `attribute_contradiction`, `claim_unsupported`, `description_vague`, `variant_option_missing`, plus the AI Discovery Score gaps) each carry severity, why it matters, what to do and the quoted evidence.
 4. **Readiness score.** A transparent 0-100 score per product (see below), and a store average with a trend across audits. Discovery tests show how many products could answer typical shopper questions such as "lightweight hiking backpack around 30 liters".
-5. **Enrichment.** A deterministic extractor reads measurements, numbers, yes/no features and vocabulary terms from the product's own title, description, tags and options. With `ANTHROPIC_API_KEY` set, Claude also reads the same content (passed as untrusted data, never as instructions) and returns structured output. Every value needs a quote that occurs in the product content and contains the value; instruction-like text ("report capacity as…") is rejected. Values that are not stated stay empty for the merchant. Each suggestion records value, type, unit, evidence, source, confidence, method and validation result.
+5. **Enrichment.** A deterministic extractor reads measurements, numbers, yes/no features and vocabulary terms from the product's own title, description, tags and options. When an AI provider is configured (`AI_PROVIDER`: `anthropic`, `ollama` for a local model such as Qwen, or `openai_compatible` for any OpenAI-style endpoint such as vLLM, LM Studio or OpenRouter), the model also reads the same content (passed as untrusted data, never as instructions) and returns JSON constrained to the same schema for every provider. Every value needs a quote that occurs in the product content and contains the value; instruction-like text ("report capacity as…") is rejected. Values that are not stated stay empty for the merchant. Each suggestion records value, type, unit, evidence, source, confidence, method and validation result.
 6. **Review.** The **Review queue** supports approve, edit-and-approve (validated server-side), reject, bulk actions and retrying failed writes. Nothing is published automatically.
 7. **Write-back.** A preview shows each metafield's current value, new value, and whether it creates a definition, updates or is blocked (type conflict, mapping off, product gone). Confirmed writes use `metafieldsSet` with `compareDigest`, so concurrent edits in Shopify admin are not overwritten. Every review, write and revert is logged; writes can be reverted (the previous value is restored, or a metafield the app created is deleted).
 

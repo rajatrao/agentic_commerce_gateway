@@ -254,13 +254,13 @@ export default function Products() {
             <s-stack direction="inline" gap="base" alignItems="center">
               <s-text color="subdued">{`${products.total} products, lowest readiness first`}</s-text>
               <s-checkbox
-                label="Use Claude for suggestions"
+                label="Use AI for suggestions"
                 checked={useAi}
                 disabled={!aiEnabled}
                 details={
                   aiEnabled
                     ? undefined
-                    : "Add an Anthropic API key to the engine to enable"
+                    : "Configure an AI provider on the engine to enable"
                 }
                 onChange={(e) => setUseAi(e.currentTarget.checked)}
               />

@@ -16,7 +16,9 @@ from app.core.config import get_settings
 from app.core.db import create_database
 from app.core.logging import configure_logging
 from app.jobs.audit_worker import AuditWorker
+from app.jobs.catalog_jobs import CatalogJobWorker
 from app.jobs.enrichment_worker import EnrichmentWorker
+from app.models import CatalogJobKind
 from app.protocols.acp_adapter import AcpAdapter
 from app.protocols.base import ProtocolError
 from app.protocols.ucp_adapter import UcpAdapter
@@ -47,10 +49,23 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if settings.enrichment_worker_enabled:
         app.state.enrichment_worker = enrichment
         enrichment.start()
+    # Refreshes get their own worker so a long publish or discovery run never delays them.
+    catalog_workers = [
+        CatalogJobWorker(
+            app.state.db, app.state.http_client, app.state.shopify_tokens, settings, kinds
+        )
+        for kinds in ((CatalogJobKind.REFRESH,), (CatalogJobKind.PUBLISH, CatalogJobKind.DISCOVERY))
+    ]
+    app.state.catalog_worker = catalog_workers[1]
+    if settings.catalog_worker_enabled:
+        for catalog_worker in catalog_workers:
+            catalog_worker.start()
     try:
         async with app.state.mcp.session_manager.run():
             yield
     finally:
+        for catalog_worker in catalog_workers:
+            await catalog_worker.stop()
         await enrichment.stop()
         await worker.stop()
         if enricher is not None:

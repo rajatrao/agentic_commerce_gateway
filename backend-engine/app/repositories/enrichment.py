@@ -3,17 +3,16 @@
 import json
 import uuid
 from collections.abc import Sequence
-from datetime import timedelta
 from typing import Any
 
-from sqlalchemy import and_, cast, delete, func, literal, or_, update
+from sqlalchemy import cast, delete, func, literal, update
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import col, select
-from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.models import (
     AttributeSuggestion,
     AuditFinding,
+    CatalogChange,
     EnrichmentJob,
     RunStatus,
     Severity,
@@ -21,14 +20,17 @@ from app.models import (
 )
 from app.models.base import utcnow
 from app.repositories.audits import ClaimedRun, LostClaim
+from app.repositories.job_queue import QueueRepository
+from app.services.auto_approval import change_details, qualifies
+from app.services.catalog_schema import AutoApproval
 from app.services.enrichment import EnrichmentResult
 
 OPEN_STATUSES = (SuggestionStatus.PENDING, SuggestionStatus.APPROVED)
 
 
-class EnrichmentRepository:
-    def __init__(self, session: AsyncSession) -> None:
-        self.session = session
+class EnrichmentRepository(QueueRepository):
+    model = EnrichmentJob
+    stale_error = "enrichment worker stopped responding"
 
     # ------------------------------------------------------------------ jobs
 
@@ -70,71 +72,6 @@ class EnrichmentRepository:
             )
         ).first()
 
-    async def claim_next(self, *, stale_after: timedelta, max_attempts: int) -> ClaimedRun | None:
-        """Same protocol as audit runs: SKIP LOCKED claim, stale heartbeats are reclaimed.
-        A reclaimed job resumes: products already finished keep their results."""
-        while True:
-            now = utcnow()
-            job = (
-                await self.session.exec(
-                    select(EnrichmentJob)
-                    .where(
-                        or_(
-                            and_(
-                                col(EnrichmentJob.status) == RunStatus.QUEUED,
-                                col(EnrichmentJob.next_attempt_at) <= now,
-                            ),
-                            and_(
-                                col(EnrichmentJob.status) == RunStatus.RUNNING,
-                                or_(
-                                    col(EnrichmentJob.heartbeat_at).is_(None),
-                                    col(EnrichmentJob.heartbeat_at) < now - stale_after,
-                                ),
-                            ),
-                        )
-                    )
-                    .order_by(col(EnrichmentJob.next_attempt_at))
-                    .limit(1)
-                    .with_for_update(skip_locked=True)
-                )
-            ).first()
-            if job is None:
-                await self.session.rollback()
-                return None
-            if job.attempts >= max_attempts:
-                job.status, job.finished_at = RunStatus.FAILED, now
-                job.last_error = job.last_error or "enrichment worker stopped responding"
-                self.session.add(job)
-                await self.session.commit()
-                continue
-            job.attempts += 1
-            job.status, job.heartbeat_at = RunStatus.RUNNING, now
-            self.session.add(job)
-            await self.session.commit()
-            return ClaimedRun(job.id, job.merchant_id, job.attempts)
-
-    async def _fenced(self, claim: ClaimedRun, *, commit: bool = True, **values: Any) -> bool:
-        result = await self.session.exec(
-            update(EnrichmentJob)
-            .where(
-                col(EnrichmentJob.id) == claim.id,
-                col(EnrichmentJob.attempts) == claim.attempt,
-                col(EnrichmentJob.status) == RunStatus.RUNNING,
-            )
-            .values(**values)
-        )
-        if commit:
-            await self.session.commit()
-        return bool(result.rowcount)  # type: ignore[attr-defined]
-
-    async def heartbeat(self, claim: ClaimedRun) -> bool:
-        return await self._fenced(claim, heartbeat_at=utcnow())
-
-    async def job_state(self, claim: ClaimedRun) -> EnrichmentJob:
-        job = await self.session.get(EnrichmentJob, claim.id, populate_existing=True)
-        assert job is not None
-        return job
-
     async def record_product(
         self,
         claim: ClaimedRun,
@@ -143,12 +80,15 @@ class EnrichmentRepository:
         result: EnrichmentResult | None,
         error: str | None,
         note: str | None = None,
+        auto_rule: AutoApproval | None = None,
     ) -> int:
         """Store one product's outcome atomically with its suggestions and AI findings.
 
         Open suggestions for the product's attributes are superseded by the new ones, except
-        approved ones, which wait for publishing and are never silently replaced."""
-        created = 0
+        approved ones, which wait for publishing and are never silently replaced. Suggestions
+        that meet the schema's auto-approval rule (when enabled) are approved and logged."""
+        created = auto_approved = 0
+        now = utcnow()
         if result is not None:
             approved = set(
                 (
@@ -173,26 +113,46 @@ class EnrichmentRepository:
             for d in result.suggestions:
                 if d.attribute_key in approved:
                     continue
-                self.session.add(
-                    AttributeSuggestion(
-                        merchant_id=claim.merchant_id,
-                        job_id=claim.id,
-                        product_gid=product_gid,
-                        product_title=product_title,
-                        schema_key=result.schema_key,
-                        attribute_key=d.attribute_key,
-                        data_type=d.data_type,
-                        current_value=d.current_value,
-                        proposed_value=d.proposed_value,
-                        evidence=d.evidence,
-                        evidence_source=d.evidence_source,
-                        confidence=d.confidence,
-                        method=d.method,
-                        explanation=d.explanation,
-                        validation_status=d.validation_status,
-                        validation_errors=d.validation_errors,
-                    )
+                suggestion = AttributeSuggestion(
+                    merchant_id=claim.merchant_id,
+                    job_id=claim.id,
+                    product_gid=product_gid,
+                    product_title=product_title,
+                    schema_key=result.schema_key,
+                    attribute_key=d.attribute_key,
+                    data_type=d.data_type,
+                    current_value=d.current_value,
+                    proposed_value=d.proposed_value,
+                    evidence=d.evidence,
+                    evidence_source=d.evidence_source,
+                    confidence=d.confidence,
+                    method=d.method,
+                    explanation=d.explanation,
+                    validation_status=d.validation_status,
+                    validation_errors=d.validation_errors,
+                    rule_confirmed=d.rule_confirmed,
                 )
+                if auto_rule is not None and qualifies(auto_rule, d):
+                    suggestion.status = SuggestionStatus.APPROVED
+                    suggestion.approved_value, suggestion.reviewed_at = d.proposed_value, now
+                    self.session.add(suggestion)
+                    await self.session.flush()
+                    self.session.add(
+                        CatalogChange(
+                            merchant_id=claim.merchant_id,
+                            product_gid=product_gid,
+                            product_title=product_title,
+                            suggestion_id=suggestion.id,
+                            attribute_key=d.attribute_key,
+                            action="auto_approve",
+                            before=d.current_value,
+                            after=d.proposed_value,
+                            details=change_details(auto_rule, d),
+                        )
+                    )
+                    auto_approved += 1
+                else:
+                    self.session.add(suggestion)
                 created += 1
             # AI findings for this product are replaced by the latest analysis.
             await self.session.exec(
@@ -224,6 +184,7 @@ class EnrichmentRepository:
             "status": "error" if error else "ok",
             "title": product_title,
             "suggestions": created,
+            "auto_approved": auto_approved,
             "error": error,
             "note": note,
         }
@@ -243,31 +204,6 @@ class EnrichmentRepository:
         await self.session.commit()
         return created
 
-    async def finish(self, claim: ClaimedRun) -> None:
-        if not await self._fenced(claim, status=RunStatus.COMPLETED, finished_at=utcnow()):
-            raise LostClaim(str(claim.id))
-
-    async def retry_or_fail(
-        self, claim: ClaimedRun, error: str, *, retry_in: timedelta | None
-    ) -> None:
-        await self.session.rollback()
-        values: dict[str, Any] = {"last_error": error[:1000]}
-        if retry_in is not None:
-            values |= {"status": RunStatus.QUEUED, "next_attempt_at": utcnow() + retry_in}
-        else:
-            values |= {"status": RunStatus.FAILED, "finished_at": utcnow()}
-        await self._fenced(claim, **values)
-
-    async def release(self, claim: ClaimedRun) -> None:
-        await self.session.rollback()
-        await self._fenced(
-            claim,
-            status=RunStatus.QUEUED,
-            attempts=claim.attempt - 1,
-            heartbeat_at=None,
-            next_attempt_at=utcnow(),
-        )
-
     # ------------------------------------------------------------------ suggestions
 
     async def suggestions(
@@ -278,10 +214,13 @@ class EnrichmentRepository:
         product_gid: str | None = None,
         attribute_key: str | None = None,
         validation_status: str | None = None,
+        ids: Sequence[uuid.UUID] | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> tuple[Sequence[AttributeSuggestion], int]:
         filters: list[Any] = [AttributeSuggestion.merchant_id == merchant_id]
+        if ids is not None:
+            filters.append(col(AttributeSuggestion.id).in_(ids))
         if statuses:
             filters.append(col(AttributeSuggestion.status).in_(statuses))
         if product_gid:

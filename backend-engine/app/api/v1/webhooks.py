@@ -68,7 +68,13 @@ async def shopify_webhook(
     elif x_shopify_topic in ORDER_TOPICS:
         await link_order(session, x_shopify_shop_domain, payload)
     elif x_shopify_topic in PRODUCT_TOPICS:
-        await sync_product(session, x_shopify_shop_domain, x_shopify_topic, payload)
+        await sync_product(
+            session,
+            x_shopify_shop_domain,
+            x_shopify_topic,
+            payload,
+            refresh_delay=settings.refresh_delay_seconds,
+        )
     elif x_shopify_topic == "customers/redact":
         await redact_customer(session, x_shopify_shop_domain, payload)
     elif x_shopify_topic not in HANDLED_TOPICS:

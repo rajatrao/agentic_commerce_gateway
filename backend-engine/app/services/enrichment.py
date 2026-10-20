@@ -67,6 +67,7 @@ class SuggestionDraft:
     explanation: str
     validation_status: str  # valid | warning | invalid | unknown
     validation_errors: list[str] = field(default_factory=list)
+    rule_confirmed: bool = False
 
 
 @dataclass
@@ -167,6 +168,7 @@ def build_suggestions(
         rule = extract_from_text(attr, sources)
         candidates: list[tuple[str, Any, str | None, str | None, float, str]] = []
         rejected: list[str] = []
+        rule_value: Any = None
 
         ai_attr = ai_by_key.get(attr.key)
         if ai_attr is not None and ai_attr.status == "stated":
@@ -189,6 +191,7 @@ def build_suggestions(
         if rule is not None:
             value, status, errors = validate_proposal(attr, rule.value, rule.evidence, haystack)
             if value is not None:
+                rule_value = value
                 candidates.append(
                     (
                         rule.method,
@@ -261,6 +264,7 @@ def build_suggestions(
                 explanation=explanation[:1000],
                 validation_status=status,
                 validation_errors=errors + rejected,
+                rule_confirmed=rule_value is not None and values_equal(rule_value, value, attr),
             )
         )
 

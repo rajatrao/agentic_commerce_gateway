@@ -17,7 +17,9 @@ include_config_on_deploy = true
 # write_draft_orders/read_shipping: price agent carts with draftOrderCalculate (no orders are created)
 # read_orders: orders/create webhook links each order back to its agent cart. Needs protected
 #   customer data access (Partner dashboard > API access); only order ids are stored.
-scopes = "write_products,read_inventory,read_themes,write_draft_orders,read_shipping,read_orders"
+# write_metaobjects: adding the category metaobject entries behind Shopify's standard
+# category metafields (shopify.material, shopify.activity) when publishing approved values.
+scopes = "write_products,write_metaobjects,read_inventory,read_themes,write_draft_orders,read_shipping,read_orders"
 
 [auth]
 redirect_urls = ["https://example.com/auth/callback"]

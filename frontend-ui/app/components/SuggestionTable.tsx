@@ -13,7 +13,8 @@ const EDITABLE: Suggestion["status"][] = ["pending", "approved", "failed"];
 
 function methodLabel(method: string) {
   const edited = method.includes("merchant_edit") ? " (edited)" : "";
-  if (method.startsWith("llm:")) return `AI (${method.slice(4).split("+")[0]})${edited}`;
+  if (method.startsWith("llm:"))
+    return `AI (${method.slice(4).split("+")[0]})${edited}`;
   if (method.startsWith("llm")) return `AI${edited}`;
   if (method.startsWith("rule")) return `Rules${edited}`;
   if (method === "unknown") return "Not found";
@@ -176,6 +177,16 @@ export function SuggestionTable({
                           ? "Retry"
                           : "Approve"}
                     </s-button>
+                    {s.status === "approved" && (
+                      <s-button
+                        disabled={busy}
+                        onClick={() =>
+                          onReview([{ id: s.id, action: "reopen" }])
+                        }
+                      >
+                        Back to review
+                      </s-button>
+                    )}
                     <s-button
                       tone="critical"
                       disabled={busy}

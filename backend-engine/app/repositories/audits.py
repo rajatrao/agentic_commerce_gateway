@@ -19,6 +19,77 @@ from app.services.catalog_auditor import ProductScore
 KEEP_DETAILED_RUNS = 10
 
 
+async def upsert_snapshots(
+    session: AsyncSession, merchant_id: uuid.UUID, scores: list[ProductScore]
+) -> None:
+    """Insert or refresh `catalog_products` rows from scored products (audits and refreshes)."""
+    if not scores:
+        return
+    now = utcnow()
+    rows = [
+        {
+            "id": uuid.uuid4(),
+            "merchant_id": merchant_id,
+            "product_gid": s.product_gid,
+            "title": s.title,
+            **s.snapshot,
+            "schema_key": s.readiness.schema_key if s.readiness else None,
+            "attributes": s.readiness.attributes_json() if s.readiness else {},
+            "readiness_score": s.readiness.score if s.readiness else None,
+            "discovery_score": s.score,
+            "synced_at": now,
+            "removed_at": None,
+        }
+        for s in scores
+    ]
+    stmt = insert(CatalogProduct).values(rows)
+    update_cols = {
+        c: stmt.excluded[c] for c in rows[0] if c not in ("id", "merchant_id", "product_gid")
+    }
+    await session.exec(
+        stmt.on_conflict_do_update(index_elements=["merchant_id", "product_gid"], set_=update_cols)
+    )
+
+
+def product_audit_row(run_id: uuid.UUID, merchant_id: uuid.UUID, s: ProductScore) -> ProductAudit:
+    return ProductAudit(
+        run_id=run_id,
+        merchant_id=merchant_id,
+        product_gid=s.product_gid,
+        title=s.title,
+        score=s.score,
+        breakdown=s.breakdown,
+        missing_fields=s.missing_fields,
+        content_hash=s.content_hash,
+        schema_key=s.readiness.schema_key if s.readiness else None,
+        readiness_score=s.readiness.score if s.readiness else None,
+        readiness_breakdown=s.readiness.breakdown if s.readiness else {},
+    )
+
+
+def finding_rows(run_id: uuid.UUID, merchant_id: uuid.UUID, s: ProductScore) -> list[AuditFinding]:
+    if s.readiness is None:
+        return []
+    return [
+        AuditFinding(
+            merchant_id=merchant_id,
+            run_id=run_id,
+            product_gid=s.product_gid,
+            product_title=s.title,
+            code=f.code,
+            attribute_key=f.attribute_key,
+            severity=Severity(f.severity),
+            method=f.method,
+            message=f.message,
+            why_it_matters=f.why_it_matters,
+            recommended_action=f.recommended_action,
+            evidence=f.evidence,
+            confidence=f.confidence,
+        )
+        for f in s.readiness.findings
+    ]
+
+
 class LostClaim(Exception):
     """Another worker took this run over (ours stopped heartbeating); stop writing to it."""
 
@@ -112,41 +183,9 @@ class AuditRepository:
         return await self._fenced(claim, heartbeat_at=utcnow())
 
     async def add_scores(self, claim: ClaimedRun, scores: list[ProductScore]) -> None:
+        self.session.add_all(product_audit_row(claim.id, claim.merchant_id, s) for s in scores)
         self.session.add_all(
-            ProductAudit(
-                run_id=claim.id,
-                merchant_id=claim.merchant_id,
-                product_gid=s.product_gid,
-                title=s.title,
-                score=s.score,
-                breakdown=s.breakdown,
-                missing_fields=s.missing_fields,
-                content_hash=s.content_hash,
-                schema_key=s.readiness.schema_key if s.readiness else None,
-                readiness_score=s.readiness.score if s.readiness else None,
-                readiness_breakdown=s.readiness.breakdown if s.readiness else {},
-            )
-            for s in scores
-        )
-        self.session.add_all(
-            AuditFinding(
-                merchant_id=claim.merchant_id,
-                run_id=claim.id,
-                product_gid=s.product_gid,
-                product_title=s.title,
-                code=f.code,
-                attribute_key=f.attribute_key,
-                severity=Severity(f.severity),
-                method=f.method,
-                message=f.message,
-                why_it_matters=f.why_it_matters,
-                recommended_action=f.recommended_action,
-                evidence=f.evidence,
-                confidence=f.confidence,
-            )
-            for s in scores
-            if s.readiness is not None
-            for f in s.readiness.findings
+            f for s in scores for f in finding_rows(claim.id, claim.merchant_id, s)
         )
         await self._upsert_snapshots(claim, [s for s in scores if s.snapshot])
         products_scanned = col(AuditRun.products_scanned) + len(scores)
@@ -156,34 +195,7 @@ class AuditRepository:
         await self.session.commit()
 
     async def _upsert_snapshots(self, claim: ClaimedRun, scores: list[ProductScore]) -> None:
-        if not scores:
-            return
-        now = utcnow()
-        rows = [
-            {
-                "id": uuid.uuid4(),
-                "merchant_id": claim.merchant_id,
-                "product_gid": s.product_gid,
-                "title": s.title,
-                **s.snapshot,
-                "schema_key": s.readiness.schema_key if s.readiness else None,
-                "attributes": s.readiness.attributes_json() if s.readiness else {},
-                "readiness_score": s.readiness.score if s.readiness else None,
-                "discovery_score": s.score,
-                "synced_at": now,
-                "removed_at": None,
-            }
-            for s in scores
-        ]
-        stmt = insert(CatalogProduct).values(rows)
-        update_cols = {
-            c: stmt.excluded[c] for c in rows[0] if c not in ("id", "merchant_id", "product_gid")
-        }
-        await self.session.exec(
-            stmt.on_conflict_do_update(
-                index_elements=["merchant_id", "product_gid"], set_=update_cols
-            )
-        )
+        await upsert_snapshots(self.session, claim.merchant_id, scores)
 
     async def finish_run(
         self,

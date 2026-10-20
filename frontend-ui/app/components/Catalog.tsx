@@ -235,8 +235,10 @@ export function FindingTable({
 
 const ACTION_LABELS: Record<CatalogChange["action"], string> = {
   approve: "Approved",
+  auto_approve: "Auto-approved",
   edit_approve: "Edited and approved",
   reject: "Rejected",
+  reopen: "Sent back to review",
   publish: "Written to Shopify",
   publish_failed: "Write failed",
   revert: "Reverted",

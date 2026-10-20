@@ -5,7 +5,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from app.services.catalog_schema import CategorySchema
+from app.services.catalog_schema import AutoApproval, CategorySchema
 
 
 class RunPoint(BaseModel):
@@ -34,10 +34,28 @@ class JobOut(BaseModel):
     product_gids: list[str] | None = None
 
 
+class CatalogJobOut(BaseModel):
+    """A publish job or discovery test run, with live progress."""
+
+    id: uuid.UUID
+    kind: str
+    status: str
+    source: str
+    total: int
+    processed: int
+    succeeded: int
+    failed: int
+    created_at: datetime
+    finished_at: datetime | None
+    last_error: str | None
+    results: dict[str, Any] = Field(default_factory=dict)
+
+
 class ChangeOut(BaseModel):
     id: int
     product_gid: str
     product_title: str
+    suggestion_id: uuid.UUID | None = None
     attribute_key: str | None
     action: str
     before: Any
@@ -74,6 +92,8 @@ class OverviewOut(BaseModel):
     recent_jobs: list[JobOut]
     recent_changes: list[ChangeOut]
     discovery_tests: list[dict[str, Any]]
+    discovery_run: CatalogJobOut | None = None
+    publish_job: CatalogJobOut | None = None
 
 
 class CatalogProductOut(BaseModel):
@@ -184,7 +204,7 @@ class EnrichmentRequest(BaseModel):
 
 class ReviewItem(BaseModel):
     id: uuid.UUID
-    action: Literal["approve", "edit", "reject"]
+    action: Literal["approve", "edit", "reject", "reopen"]
     value: Any = None
 
 
@@ -193,8 +213,27 @@ class ReviewRequest(BaseModel):
 
 
 class PublishRequest(BaseModel):
-    suggestion_ids: list[uuid.UUID] | None = Field(default=None, max_length=500)
+    # None: every approved suggestion (up to PUBLISH_MAX_SUGGESTIONS).
+    suggestion_ids: list[uuid.UUID] | None = Field(default=None, max_length=5000)
     confirm: bool = False
+
+
+class AutoApprovalSchemaOut(BaseModel):
+    schema_key: str
+    schema_name: str
+    rule: AutoApproval
+    attributes: list[str]
+    pending: int
+    qualifying: int
+    blocked_by: dict[str, int]
+    auto_approved_total: int
+
+
+class AutoApprovalReport(BaseModel):
+    schemas: list[AutoApprovalSchemaOut]
+    recent: list[ChangeOut]
+    # Current status of each suggestion in `recent`, by suggestion id.
+    statuses: dict[str, str] = Field(default_factory=dict)
 
 
 class SchemaOut(BaseModel):

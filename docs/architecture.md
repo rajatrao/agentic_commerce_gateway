@@ -191,9 +191,12 @@ The offline Admin token gets to the backend through the Remix `afterAuth` hook, 
 | id uuid PK | merchant_id FK | status run_status | product_gids text[] | use_ai bool | total/succeeded/failed int | results jsonb (per product) | attempts | next_attempt_at | heartbeat_at |
 
 **attribute_suggestions**: proposed attribute values with provenance
-| id uuid PK | merchant_id FK | job_id FK | product_gid | schema_key | attribute_key | data_type | current_value / proposed_value / approved_value jsonb | evidence text | evidence_source | confidence | method (`rule_extraction`, `llm:<model>`, `+merchant_edit`) | validation_status, validation_errors | status enum(`pending`,`approved`,`rejected`,`superseded`,`published`,`failed`,`reverted`) | reviewed_at / published_at | partial UNIQUE `(merchant_id, product_gid, attribute_key)` while pending or approved |
+| id uuid PK | merchant_id FK | job_id FK | product_gid | schema_key | attribute_key | data_type | current_value / proposed_value / approved_value jsonb | evidence text | evidence_source | confidence | method (`rule_extraction`, `llm:<model>`, `+merchant_edit`) | validation_status, validation_errors | rule_confirmed bool (rule extraction read the same value) | status enum(`pending`,`approved`,`rejected`,`superseded`,`published`,`failed`,`reverted`) | reviewed_at / published_at | partial UNIQUE `(merchant_id, product_gid, attribute_key)` while pending or approved |
 
-**catalog_changes**: append-only audit log of reviews, writes and reverts (before/after jsonb, details, reverted_at)
+**catalog_jobs**: durable queue for background publishing, single-product refreshes and store search tests (same claim/heartbeat/fencing scheme); one worker takes refreshes, another publish and discovery jobs
+| id uuid PK | merchant_id FK | kind enum(`publish`,`refresh`,`discovery`) | status run_status | dedupe_key (product gid for refreshes; a queued job with the same key is reused) | source | params jsonb | total/processed/succeeded/failed int | results jsonb | attempts | next_attempt_at | heartbeat_at | finished_at |
+
+**catalog_changes**: append-only audit log of reviews, auto-approvals, reopens, writes and reverts (before/after jsonb, details, reverted_at)
 
 **webhook_events**: dedupe and replay
 | id bigserial | shop_domain | topic | webhook_id text UNIQUE | payload jsonb | received_at | processed_at |

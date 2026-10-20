@@ -75,8 +75,16 @@ class Settings(BaseSettings):
     # Enrichment job worker (Postgres job queue over enrichment_jobs).
     enrichment_worker_enabled: bool = True
     enrichment_max_products: int = 250
-    # Approved values written to Shopify per publish request.
-    publish_max_suggestions: int = 250
+    # Catalog job worker (Postgres job queue over catalog_jobs): background publishing,
+    # single-product refreshes after webhooks and writes, and discovery search tests.
+    catalog_worker_enabled: bool = True
+    # Approved values written to Shopify per publish job, and per live preview.
+    publish_max_suggestions: int = 5000
+    publish_preview_max: int = 250
+    # Product webhooks within this window are folded into one refresh.
+    refresh_delay_seconds: float = 10.0
+    # Search results checked per discovery question.
+    discovery_result_limit: int = 10
 
     # Public https origin of this service, used in discovery documents (UCP profile). Falls back
     # to the request's own base URL.

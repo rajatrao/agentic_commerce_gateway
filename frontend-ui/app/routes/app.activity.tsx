@@ -16,7 +16,7 @@ import { boundary } from "@shopify/shopify-app-react-router/server";
 
 import { authenticate } from "../shopify.server";
 import { backend, errorMessage } from "../lib/backend.server";
-import type { EnrichmentJob } from "../lib/types";
+import type { CatalogJob, EnrichmentJob } from "../lib/types";
 import { ChangeTable, formatDate, productId } from "../components/Catalog";
 
 const POLL_MS = 3000;
@@ -34,16 +34,17 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const url = new URL(request.url);
   const writesOnly = url.searchParams.get("writes") === "1";
   const page = Math.max(1, Number(url.searchParams.get("page") ?? 1) || 1);
-  const [runs, jobs, changes] = await Promise.all([
+  const [runs, jobs, publishJobs, changes] = await Promise.all([
     backend.auditRuns(session.shop),
     backend.enrichmentJobs(session.shop),
+    backend.publishJobs(session.shop, 10),
     backend.catalogChanges(session.shop, {
       writes_only: writesOnly,
       limit: PAGE_SIZE,
       offset: (page - 1) * PAGE_SIZE,
     }),
   ]);
-  return { runs, jobs, changes, writesOnly, page };
+  return { runs, jobs, publishJobs, changes, writesOnly, page };
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
@@ -73,7 +74,7 @@ function active(status: string) {
 }
 
 export default function Activity() {
-  const { runs, jobs, changes, writesOnly, page } =
+  const { runs, jobs, publishJobs, changes, writesOnly, page } =
     useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const revalidator = useRevalidator();
@@ -82,7 +83,9 @@ export default function Activity() {
   const navigate = useNavigate();
   const busy = fetcher.state !== "idle" ? fetcher.formData : null;
   const working =
-    runs.some((r) => active(r.status)) || jobs.some((j) => active(j.status));
+    runs.some((r) => active(r.status)) ||
+    jobs.some((j) => active(j.status)) ||
+    publishJobs.some((j) => active(j.status));
 
   useEffect(() => {
     if (fetcher.data?.ok && fetcher.data.message)
@@ -120,8 +123,9 @@ export default function Activity() {
         <s-stack direction="block" gap="base">
           <s-paragraph>
             Each audit reads every active product from Shopify, matches it to a
-            category schema and scores it. Product updates and deletions also
-            arrive by webhook between audits.
+            category schema and scores it. Between audits, a product is re-read
+            and re-scored on its own shortly after Shopify reports a change, and
+            after the app writes to it or reverts a write.
           </s-paragraph>
           {runs.length === 0 ? (
             <s-paragraph>No audits yet.</s-paragraph>
@@ -196,6 +200,45 @@ export default function Activity() {
               />
             ))}
           </s-stack>
+        )}
+      </s-section>
+
+      <s-section heading="Writes to Shopify">
+        {publishJobs.length === 0 ? (
+          <s-paragraph>
+            Nothing written yet. Approved values are written from the{" "}
+            <s-link href="/app/review?status=approved">Review queue</s-link>.
+          </s-paragraph>
+        ) : (
+          <s-table variant="auto">
+            <s-table-header-row>
+              <s-table-header listSlot="primary">Started</s-table-header>
+              <s-table-header listSlot="secondary">Status</s-table-header>
+              <s-table-header format="numeric">Done</s-table-header>
+              <s-table-header format="numeric">Written</s-table-header>
+              <s-table-header format="numeric">Failed</s-table-header>
+            </s-table-header-row>
+            <s-table-body>
+              {publishJobs.map((j: CatalogJob) => (
+                <s-table-row key={j.id}>
+                  <s-table-cell>{formatDate(j.created_at)}</s-table-cell>
+                  <s-table-cell>
+                    <s-stack direction="block" gap="small-300">
+                      <s-badge tone={STATUS_TONES[j.status]}>
+                        {j.status}
+                      </s-badge>
+                      {j.last_error ? (
+                        <s-text color="subdued">{j.last_error}</s-text>
+                      ) : null}
+                    </s-stack>
+                  </s-table-cell>
+                  <s-table-cell>{`${j.processed} of ${j.total}`}</s-table-cell>
+                  <s-table-cell>{String(j.succeeded)}</s-table-cell>
+                  <s-table-cell>{String(j.failed)}</s-table-cell>
+                </s-table-row>
+              ))}
+            </s-table-body>
+          </s-table>
         )}
       </s-section>
 

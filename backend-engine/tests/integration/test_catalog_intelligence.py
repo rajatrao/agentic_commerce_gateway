@@ -86,8 +86,41 @@ class FakeStore:
         self.definitions: dict[tuple[str, str], str] = {}
         self.writes: list[dict[str, Any]] = []
         self.deletes: list[dict[str, Any]] = []
+        # Standard category metafield definitions (namespace "shopify") and their entries.
+        self.category_definitions: list[dict[str, Any]] = []
+        self.entries: dict[str, list[dict[str, Any]]] = {}
+        self.router: respx.Router | None = None
 
     def handle(self, query: str, variables: dict[str, Any]) -> dict[str, Any]:
+        if "ProductCategoryAttributes" in query:
+            return {"product": copy.deepcopy(self.products.get(variables["id"]))}
+        if "CategoryMetafieldDefinitions" in query:
+            return {
+                "metafieldDefinitions": {
+                    "nodes": self.category_definitions,
+                    "pageInfo": {"hasNextPage": False, "endCursor": None},
+                }
+            }
+        if "TaxonomyEntries" in query:
+            return {
+                "metaobjects": {
+                    "nodes": self.entries.get(variables["type"], []),
+                    "pageInfo": {"hasNextPage": False, "endCursor": None},
+                }
+            }
+        if "CreateTaxonomyEntry" in query:
+            m = variables["metaobject"]
+            entry = {"id": f"gid://shopify/Metaobject/{sum(map(len, self.entries.values())) + 1}"}
+            self.entries.setdefault(m["type"], []).append(entry | {"fields": m["fields"]})
+            return {"metaobjectCreate": {"metaobject": entry, "userErrors": []}}
+        if "DiscoverySearch" in query:
+            words = variables["query"].lower().split()
+            hits = [
+                {"id": p["id"], "title": p["title"]}
+                for p in self.products.values()
+                if any(w in p["title"].lower() for w in words)
+            ]
+            return {"products": {"nodes": hits[: variables["first"]]}}
         if "AuditProducts" in query:
             return {
                 "products": {
@@ -166,6 +199,7 @@ def store() -> Iterator[FakeStore]:
         return httpx.Response(200, json={"data": fake.handle(body["query"], body["variables"])})
 
     with respx.mock(assert_all_called=False) as router:
+        fake.router = router
         router.post(f"{FRONTEND_URL}/internal/admin-token").respond(
             json={"access_token": "shpat_fresh", "expires_at": None}
         )
@@ -190,6 +224,26 @@ def wait_for_job(client: TestClient, shop: str, job_id: str) -> dict[str, Any]:
             return job
         assert time.monotonic() < deadline, job
         time.sleep(0.05)
+
+
+def wait_for_catalog_job(client: TestClient, shop: str, path: str) -> dict[str, Any]:
+    deadline = time.monotonic() + 10
+    while True:
+        job: dict[str, Any] = client.get(
+            f"/api/v1/merchant/catalog/{path}", headers=auth(shop)
+        ).json()
+        if job["status"] not in ("queued", "running"):
+            return job
+        assert time.monotonic() < deadline, job
+        time.sleep(0.05)
+
+
+def wait_until(check: Any, timeout: float = 10.0) -> Any:
+    deadline = time.monotonic() + timeout
+    while not (result := check()):
+        assert time.monotonic() < deadline, "condition not met"
+        time.sleep(0.05)
+    return result
 
 
 def suggestions(client: TestClient, shop: str, **params: str) -> dict[str, dict[str, Any]]:
@@ -300,8 +354,13 @@ def test_enrich_review_publish_and_revert(client: TestClient, store: FakeStore) 
 
     refused = client.post(f"{C}/publish", json={}, headers=auth(shop))
     assert refused.status_code == 422  # confirmation required
-    result = client.post(f"{C}/publish", json={"confirm": True}, headers=auth(shop)).json()
-    assert result == {"published": 3, "unchanged": 0, "failed": 0}
+    queued = client.post(f"{C}/publish", json={"confirm": True}, headers=auth(shop))
+    assert queued.status_code == 202, queued.text
+    assert queued.json()["kind"] == "publish" and queued.json()["total"] == 3
+    result = wait_for_catalog_job(client, shop, f"publish-jobs/{queued.json()['id']}")
+    assert result["status"] == "completed", result
+    assert (result["processed"], result["succeeded"], result["failed"]) == (3, 3, 0)
+    assert result["results"]["skipped"] == 0
     written = {(w["key"], w["value"]) for w in store.writes}
     assert ("capacity_liters", "28") in written
     assert ("weight", json.dumps({"value": 1.2, "unit": "kg"})) in written
@@ -309,14 +368,31 @@ def test_enrich_review_publish_and_revert(client: TestClient, store: FakeStore) 
     assert tent_write["compareDigest"] == "d-tent"
     assert store.definitions[("custom", "capacity_liters")] == "number_decimal"
 
-    again = client.post(f"{C}/publish", json={"confirm": True}, headers=auth(shop)).json()
-    assert again == {"published": 0, "unchanged": 0, "failed": 0}  # nothing approved is left
+    again = client.post(f"{C}/publish", json={"confirm": True}, headers=auth(shop))
+    assert again.status_code == 422  # nothing approved is left
+    jobs = client.get(f"{C}/publish-jobs", headers=auth(shop)).json()
+    assert [j["status"] for j in jobs] == ["completed"]
 
     published = suggestions(client, shop, status="published")
     assert set(published) == {"501:weight", "501:capacity", "502:sleeping_capacity"}
     detail = client.get(f"{C}/products/501", headers=auth(shop)).json()
     attrs = {a["key"]: a for a in detail["attributes"]}
     assert attrs["capacity"]["current_display"] == "28 l"
+    # The written products are re-read and re-scored in the background.
+    before = detail["product"]["readiness_score"]
+
+    def rescored() -> dict[str, Any] | None:
+        d = client.get(f"{C}/products/501", headers=auth(shop)).json()
+        a = {x["key"]: x for x in d["attributes"]}
+        return (
+            d
+            if a["capacity"]["source"] == "metafield:custom.capacity_liters"
+            and not any(f["attribute_key"] == "capacity" for f in d["findings"])
+            else None
+        )
+
+    rescored_detail = wait_until(rescored)
+    assert rescored_detail["product"]["readiness_score"] >= before
 
     writes = client.get(f"{C}/changes", params={"writes_only": True}, headers=auth(shop)).json()
     tent_change = next(c for c in writes["items"] if c["attribute_key"] == "sleeping_capacity")
@@ -435,6 +511,7 @@ def test_deleted_products_close_open_suggestions(client: TestClient, store: Fake
     products = client.get(f"{C}/products", headers=auth(shop)).json()
     assert [p["title"] for p in products["items"]] == ["Ridge 2 Tent"]
 
+    store.products[f"{P}502"]["title"] = "Ridge 2 Tent v2"
     webhook(
         client, shop, "products/update", {"id": 502, "title": "Ridge 2 Tent v2", "status": "active"}
     )
@@ -492,3 +569,221 @@ def test_schema_mapping_and_settings_configuration(client: TestClient, store: Fa
         headers=auth(shop),
     )
     assert bad_weights.status_code == 422
+
+
+def test_webhook_queues_a_rescore_of_the_product(client: TestClient, store: FakeStore) -> None:
+    shop = "ci-refresh.myshopify.com"
+    audited_shop(client, shop)
+    detail = client.get(f"{C}/products/501", headers=auth(shop)).json()
+    assert any(f["attribute_key"] == "capacity" for f in detail["findings"])
+
+    # The merchant adds the capacity in Shopify admin; the webhook alone triggers a re-score.
+    store.products[f"{P}501"]["metafields"]["nodes"].append(
+        {
+            "namespace": "custom",
+            "key": "capacity_liters",
+            "type": "number_decimal",
+            "value": "28",
+            "compareDigest": "d-new",
+        }
+    )
+    webhook(client, shop, "products/update", {"id": 501, "status": "active"})
+
+    def capacity_known() -> dict[str, Any] | None:
+        d = client.get(f"{C}/products/501", headers=auth(shop)).json()
+        attrs = {a["key"]: a for a in d["attributes"]}
+        return d if attrs["capacity"]["current_display"] == "28 l" else None
+
+    refreshed = wait_until(capacity_known)
+    assert not any(f["attribute_key"] == "capacity" for f in refreshed["findings"])
+    assert refreshed["product"]["readiness_score"] > detail["product"]["readiness_score"]
+
+    # Archiving the product in Shopify removes it on the next refresh.
+    store.products[f"{P}501"]["status"] = "ARCHIVED"
+    webhook(client, shop, "products/update", {"id": 501})
+    wait_until(
+        lambda: (
+            [p["title"] for p in client.get(f"{C}/products", headers=auth(shop)).json()["items"]]
+            == ["Ridge 2 Tent"]
+        )
+    )
+
+
+CATEGORY = {
+    "id": "gid://shopify/TaxonomyCategory/lb-1",
+    "fullName": "Luggage & Bags > Backpacks",
+    "attributes": {
+        "nodes": [
+            {
+                "__typename": "TaxonomyChoiceListAttribute",
+                "id": "gid://shopify/TaxonomyAttribute/1",
+                "name": "Bag/Case material",
+                "values": {
+                    "nodes": [
+                        {"id": "gid://shopify/TaxonomyValue/10", "name": "Nylon"},
+                        {"id": "gid://shopify/TaxonomyValue/11", "name": "Polyester"},
+                    ]
+                },
+            },
+            {"__typename": "TaxonomyMeasurementAttribute"},
+        ]
+    },
+}
+
+
+def test_category_metafields_follow_the_shopify_taxonomy(
+    client: TestClient, store: FakeStore
+) -> None:
+    shop = "ci-taxonomy.myshopify.com"
+    backpack = store.products[f"{P}501"]
+    backpack["category"] = CATEGORY
+    backpack["description"] += " Made of ripstop nylon."
+    store.category_definitions.append(
+        {
+            "name": "Bag/Case material",
+            "namespace": "shopify",
+            "key": "bag-case-material",
+            "type": {"name": "list.metaobject_reference"},
+            "validations": [],
+        }
+    )
+    audited_shop(client, shop)
+    job = client.post(f"{C}/enrichment-jobs", json={"product_gids": ["501"]}, headers=auth(shop))
+    wait_for_job(client, shop, job.json()["id"])
+    s = suggestions(client, shop)
+    assert s["501:material"]["proposed_value"] == "ripstop nylon"
+    client.post(
+        f"{C}/suggestions/review",
+        json={"actions": [{"id": s["501:material"]["id"], "action": "approve"}]},
+        headers=auth(shop),
+    )
+
+    preview = client.post(f"{C}/publish/preview", json={}, headers=auth(shop)).json()
+    [category] = preview["category_metafields"]
+    assert category["metafield"] == "shopify.bag-case-material"
+    assert category["values"] == ["Nylon"] and category["action"] == "add"
+    assert store.entries == {}  # preview creates nothing
+
+    queued = client.post(f"{C}/publish", json={"confirm": True}, headers=auth(shop)).json()
+    done = wait_for_catalog_job(client, shop, f"publish-jobs/{queued['id']}")
+    assert done["status"] == "completed" and done["succeeded"] == 1
+    taxonomy = done["results"][f"taxonomy:{P}501:shopify.bag-case-material"]
+    assert taxonomy["ok"] and taxonomy["action"] == "written"
+    [entry] = store.entries["shopify--bag-case-material"]
+    assert {"key": "taxonomy_reference", "value": "gid://shopify/TaxonomyValue/10"} in entry[
+        "fields"
+    ]
+    write = next(w for w in store.writes if w["namespace"] == "shopify")
+    assert write["type"] == "list.metaobject_reference"
+    assert json.loads(write["value"]) == [entry["id"]]
+
+    changes = client.get(f"{C}/changes", params={"writes_only": True}, headers=auth(shop)).json()
+    category_change = next(
+        c for c in changes["items"] if c["details"]["metafield"] == "shopify.bag-case-material"
+    )
+    assert category_change["details"]["values"] == ["Nylon"]
+    reverted = client.post(f"{C}/changes/{category_change['id']}/revert", headers=auth(shop))
+    assert reverted.status_code == 200, reverted.text
+    assert store.deletes[-1]["key"] == "bag-case-material"
+    # Reverting the category metafield leaves the custom metafield write in place.
+    assert "501:material" in suggestions(client, shop, status="published")
+
+
+def test_auto_approval_is_opt_in_and_reported(client: TestClient, store: FakeStore) -> None:
+    shop = "ci-auto.myshopify.com"
+    audited_shop(client, shop)
+    report = client.get(f"{C}/auto-approval", headers=auth(shop)).json()
+    backpacks = next(r for r in report["schemas"] if r["schema_key"] == "backpacks")
+    assert backpacks["rule"]["enabled"] is False and backpacks["auto_approved_total"] == 0
+
+    bad = client.put(
+        f"{C}/schemas/backpacks/auto-approval",
+        json={"enabled": True, "attributes": ["no_such_attribute"]},
+        headers=auth(shop),
+    )
+    assert bad.status_code == 422
+    rule = {"enabled": True, "min_confidence": 0.7, "attributes": ["weight", "capacity"]}
+    saved = client.put(f"{C}/schemas/backpacks/auto-approval", json=rule, headers=auth(shop))
+    assert saved.status_code == 200 and saved.json()["definition"]["auto_approve"] == rule
+
+    job = client.post(f"{C}/enrichment-jobs", json={"product_gids": ["501"]}, headers=auth(shop))
+    done = wait_for_job(client, shop, job.json()["id"])
+    assert done["results"][f"{P}501"]["auto_approved"] == 1
+    approved = suggestions(client, shop, status="approved")
+    assert set(approved) == {"501:weight"}  # rule-confirmed, fills an empty value
+    pending = suggestions(client, shop)
+    assert "501:capacity" in pending  # unknown value: never auto-approved
+    assert "501:laptop_compartment" in pending  # not in the rule's attributes
+
+    report = client.get(f"{C}/auto-approval", headers=auth(shop)).json()
+    backpacks = next(r for r in report["schemas"] if r["schema_key"] == "backpacks")
+    assert backpacks["auto_approved_total"] == 1
+    assert backpacks["blocked_by"]["attribute not included"] >= 1
+    [change] = report["recent"]
+    assert change["action"] == "auto_approve" and change["details"]["evidence"] == "Weighs 1.2 kg."
+    assert report["statuses"] == {approved["501:weight"]["id"]: "approved"}
+
+    reopened = client.post(
+        f"{C}/suggestions/review",
+        json={"actions": [{"id": approved["501:weight"]["id"], "action": "reopen"}]},
+        headers=auth(shop),
+    ).json()
+    assert reopened["results"][0]["ok"]
+    assert "501:weight" in suggestions(client, shop)
+
+    applied = client.post(f"{C}/auto-approval/backpacks/apply", headers=auth(shop)).json()
+    assert applied == {"approved": 1}
+    off = client.post(f"{C}/auto-approval/tents/apply", headers=auth(shop))
+    assert off.status_code == 409  # not enabled for tents
+
+
+def test_discovery_questions_run_against_storefront_search(
+    client: TestClient, store: FakeStore
+) -> None:
+    shop = "ci-discovery.myshopify.com"
+    audited_shop(client, shop)
+    assert store.router is not None
+    calls: list[dict[str, Any]] = []
+
+    def mcp(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        calls.append(body)
+        products = [{"product_id": f"{P}501", "title": "Adventure Backpack"}]
+        text = json.dumps({"products": products, "pagination": {}})
+        return httpx.Response(
+            200, json={"jsonrpc": "2.0", "id": body["id"], "result": {"content": [
+                {"type": "text", "text": text}
+            ]}}
+        )  # fmt: skip
+
+    store.router.post(f"https://{shop}/api/mcp").mock(side_effect=mcp)
+    run = client.post(f"{C}/discovery-runs", headers=auth(shop))
+    assert run.status_code == 202, run.text
+    done = wait_for_catalog_job(client, shop, f"discovery-runs/{run.json()['id']}")
+    assert done["status"] == "completed", done
+    summary = done["results"]
+    assert summary["method"] == "storefront_mcp"
+    assert calls[0]["params"]["name"] == "search_shop_catalog"
+    by_query = {q["query"]: q for q in summary["queries"]}
+    travel = by_query["travel backpack with a laptop compartment"]
+    assert travel["returned"] == 1 and travel["in_schema"] == 1
+    assert travel["results"][0]["title"] == "Adventure Backpack"
+    tent = by_query["ultralight 2 person backpacking tent"]
+    assert tent["in_schema"] == 0  # the search returned a backpack for a tent question
+    overview = client.get(f"{C}/overview", headers=auth(shop)).json()
+    assert overview["discovery_run"]["id"] == done["id"]
+
+
+def test_discovery_falls_back_to_admin_search(client: TestClient, store: FakeStore) -> None:
+    shop = "ci-discovery-fallback.myshopify.com"
+    audited_shop(client, shop)
+    assert store.router is not None
+    store.router.post(f"https://{shop}/api/mcp").respond(401)  # password-protected store
+    run = client.post(f"{C}/discovery-runs", headers=auth(shop)).json()
+    done = wait_for_catalog_job(client, shop, f"discovery-runs/{run['id']}")
+    summary = done["results"]
+    assert summary["method"] == "admin_search"
+    assert "401" in summary["fallback_reason"]
+    tent = next(q for q in summary["queries"] if q["schema_key"] == "tents")
+    assert tent["method"] == "admin_search"
+    assert all(q["error"] is None for q in summary["queries"])

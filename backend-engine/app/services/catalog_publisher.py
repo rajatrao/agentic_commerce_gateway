@@ -4,13 +4,17 @@ Nothing reaches Shopify without an explicit merchant approval: `review` moves su
 approved (optionally with an edited value) or rejected, and only approved suggestions can be
 previewed and published. Every decision and every write (with the value it replaced) is
 recorded in `catalog_changes`, which is what makes a write revertible.
+
+Publishing runs as a background `publish` job (`app.jobs.catalog_jobs`), which calls
+`publish_rows` one batch at a time. Attributes with a `taxonomy_attribute` are also written to
+the product's Shopify standard category metafield (`taxonomy_writer`).
 """
 
 from __future__ import annotations
 
 import json
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from sqlalchemy import cast, literal, update
@@ -29,6 +33,7 @@ from app.models.base import utcnow
 from app.repositories.catalog import CatalogRepository
 from app.repositories.catalog_config import CatalogConfig
 from app.repositories.enrichment import EnrichmentRepository
+from app.services.auto_approval import change_details, qualifies, unmet_conditions
 from app.services.catalog_schema import (
     AttributeDefinition,
     InvalidValue,
@@ -36,6 +41,12 @@ from app.services.catalog_schema import (
     validate_value,
 )
 from app.services.metafield_writer import MetafieldWriter, PlanItem, WriteRequest
+from app.services.taxonomy_writer import (
+    LIST_TYPE,
+    TaxonomyItem,
+    TaxonomyRequest,
+    TaxonomyWriter,
+)
 
 
 class ReviewError(Exception):
@@ -45,7 +56,7 @@ class ReviewError(Exception):
 @dataclass
 class ReviewAction:
     id: uuid.UUID
-    action: Literal["approve", "edit", "reject"]
+    action: Literal["approve", "edit", "reject", "reopen"]
     value: Any = None
 
 
@@ -104,7 +115,16 @@ async def review(
             )
             continue
         attr = attribute_for(config, s)
-        if a.action == "reject":
+        if a.action == "reopen":
+            # Send an approved (for example auto-approved) value back to the review queue.
+            if s.status is not SuggestionStatus.APPROVED:
+                results.append(
+                    {"id": str(a.id), "ok": False, "error": "only approved values can be reopened"}
+                )
+                continue
+            session.add(_change(s, "reopen", s.approved_value, None))
+            s.status, s.approved_value, s.reviewed_at = SuggestionStatus.PENDING, None, None
+        elif a.action == "reject":
             session.add(_change(s, "reject", s.proposed_value, None))
             s.status, s.reviewed_at = SuggestionStatus.REJECTED, now
         elif a.action == "approve":
@@ -213,28 +233,59 @@ async def preview(
     writer: MetafieldWriter,
     ids: list[uuid.UUID] | None,
     limit: int,
-) -> list[dict[str, Any]]:
+    taxonomy: TaxonomyWriter | None = None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """(metafield writes, category metafield writes) that publishing would make."""
     rows = await _approved(session, merchant, ids, limit, lock=False)
     items = await writer.plan(_requests(config, rows))
-    return [i.as_json() for i in items] + _unmapped(config, rows)
+    category: list[dict[str, Any]] = []
+    if taxonomy is not None:
+        writable = {i.suggestion_id for i in items if i.writable or i.action == "unchanged"}
+        requests = [
+            TaxonomyRequest(str(s.id), s.product_gid, s.product_title, attr, s.approved_value)
+            for s in rows
+            if str(s.id) in writable
+            and (attr := attribute_for(config, s)) is not None
+            and attr.taxonomy_attribute
+        ]
+        category = [i.as_json() for i in await taxonomy.plan(requests)]
+    return [i.as_json() for i in items] + _unmapped(config, rows), category
 
 
-async def publish(
+@dataclass
+class BatchResult:
+    published: int = 0
+    unchanged: int = 0
+    failed: int = 0
+    # Per suggestion id, for anything not plainly written: {"status", "error", ...}.
+    details: dict[str, dict[str, Any]] = field(default_factory=dict)
+    taxonomy: list[dict[str, Any]] = field(default_factory=list)
+    product_gids: set[str] = field(default_factory=set)
+
+
+async def lock_approved(
+    session: AsyncSession, merchant: Merchant, ids: list[uuid.UUID], limit: int
+) -> list[AttributeSuggestion]:
+    """The next approved suggestions among `ids`, row-locked. Rows another worker holds are
+    skipped, so a suggestion is never written twice."""
+    return await _approved(session, merchant, ids, limit, lock=True)
+
+
+async def publish_rows(
     session: AsyncSession,
-    merchant: Merchant,
     config: CatalogConfig,
     writer: MetafieldWriter,
-    ids: list[uuid.UUID] | None,
-    limit: int,
-) -> dict[str, Any]:
-    """Write approved values to Shopify. Rows are locked for the duration, so a concurrent
-    publish of the same suggestions skips them instead of writing twice."""
-    rows = await _approved(session, merchant, ids, limit, lock=True)
+    taxonomy: TaxonomyWriter,
+    rows: list[AttributeSuggestion],
+) -> BatchResult:
+    """Write one batch of locked, approved suggestions to Shopify and record the outcome.
+    Does not commit: the job commits it together with its progress."""
     by_id = {str(s.id): s for s in rows}
     outcomes = await writer.publish(await writer.plan(_requests(config, rows)))
     now = utcnow()
-    published = failed = unchanged = 0
+    result = BatchResult()
     snapshot: dict[str, dict[str, Any]] = {}
+    written: list[TaxonomyRequest] = []
     for outcome in outcomes:
         item: PlanItem = outcome.item
         s = by_id[item.suggestion_id]
@@ -248,9 +299,10 @@ async def publish(
         if outcome.ok:
             s.status, s.published_at, s.last_error = SuggestionStatus.PUBLISHED, now, None
             if item.action == "unchanged":
-                unchanged += 1
+                result.unchanged += 1
+                result.details[str(s.id)] = _detail(s, "unchanged")
             else:
-                published += 1
+                result.published += 1
                 session.add(_change(s, "publish", before, after, metafield=metafield))
             snapshot.setdefault(s.product_gid, {})[s.attribute_key] = {
                 "value": s.approved_value,
@@ -258,12 +310,21 @@ async def publish(
                 "source": f"metafield:{metafield}",
                 "errors": [],
             }
+            attr = attribute_for(config, s)
+            if attr is not None and attr.taxonomy_attribute:
+                written.append(
+                    TaxonomyRequest(
+                        str(s.id), s.product_gid, s.product_title, attr, s.approved_value
+                    )
+                )
+            result.product_gids.add(s.product_gid)
         else:
-            failed += 1
+            result.failed += 1
             s.status, s.last_error = (
                 SuggestionStatus.FAILED,
                 (outcome.error or "write failed")[:1000],
             )
+            result.details[str(s.id)] = _detail(s, "failed", s.last_error)
             session.add(
                 _change(s, "publish_failed", before, after, metafield=metafield, error=s.last_error)
             )
@@ -271,13 +332,52 @@ async def publish(
         session.add(s)
     for s in rows:
         if s.attribute_key not in config.mappings or attribute_for(config, s) is None:
-            failed += 1
+            result.failed += 1
             s.status, s.last_error = SuggestionStatus.FAILED, "no metafield mapping"
+            result.details[str(s.id)] = _detail(s, "failed", s.last_error)
             session.add(s)
     for gid, attrs in snapshot.items():
-        await _patch_snapshot(session, merchant.id, gid, attrs)
-    await session.commit()
-    return {"published": published, "unchanged": unchanged, "failed": failed}
+        await _patch_snapshot(session, rows[0].merchant_id, gid, attrs)
+    if written:
+        result.taxonomy = await _publish_taxonomy(session, taxonomy, by_id, written)
+    return result
+
+
+def _detail(s: AttributeSuggestion, status: str, error: str | None = None) -> dict[str, Any]:
+    return {
+        "status": status,
+        "product_title": s.product_title,
+        "attribute_key": s.attribute_key,
+        "error": error,
+    }
+
+
+async def _publish_taxonomy(
+    session: AsyncSession,
+    taxonomy: TaxonomyWriter,
+    by_id: dict[str, AttributeSuggestion],
+    requests: list[TaxonomyRequest],
+) -> list[dict[str, Any]]:
+    report: list[dict[str, Any]] = []
+    for outcome in await taxonomy.publish(await taxonomy.plan(requests)):
+        item: TaxonomyItem = outcome.item
+        entry = item.as_json() | {"ok": outcome.ok, "error": outcome.error}
+        if outcome.ok and outcome.after is not None:
+            s = by_id[item.suggestion_ids[0]]
+            entry["action"] = "written"
+            session.add(
+                _change(
+                    s,
+                    "publish",
+                    {"value": outcome.before, "type": LIST_TYPE} if outcome.before else None,
+                    {"value": outcome.after, "type": LIST_TYPE},
+                    metafield=item.metafield,
+                    taxonomy=True,
+                    values=[v["name"] for v in item.values],
+                )
+            )
+        report.append(entry)
+    return report
 
 
 async def _patch_snapshot(
@@ -323,13 +423,14 @@ async def revert(
         details={"metafield": f"{namespace}.{key}", "reverts": change.id},
     )
     session.add(revert_row)
-    if change.suggestion_id:
+    taxonomy = bool(change.details.get("taxonomy"))
+    if change.suggestion_id and not taxonomy:
         await session.exec(
             update(AttributeSuggestion)
             .where(col(AttributeSuggestion.id) == change.suggestion_id)
             .values(status=SuggestionStatus.REVERTED, updated_at=now)
         )
-    if change.attribute_key:
+    if change.attribute_key and not taxonomy:
         product = await CatalogRepository(session).product(merchant.id, change.product_gid)
         if product is not None:
             attrs = dict(product.attributes)
@@ -347,3 +448,71 @@ async def revert(
     await session.commit()
     await session.refresh(revert_row)
     return revert_row
+
+
+async def auto_approve_pending(
+    session: AsyncSession, merchant: Merchant, config: CatalogConfig, schema_key: str
+) -> int:
+    """Approve the pending suggestions of one schema that meet its (enabled) auto-approval
+    rule now. Each approval is logged as `auto_approve` with the rule and evidence."""
+    schema = config.schemas.get(schema_key)
+    if schema is None or not schema.auto_approve.enabled:
+        raise ReviewError("auto-approval is not enabled for this schema")
+    rule = schema.auto_approve
+    rows = (
+        await session.exec(
+            select(AttributeSuggestion)
+            .where(
+                AttributeSuggestion.merchant_id == merchant.id,
+                AttributeSuggestion.schema_key == schema_key,
+                AttributeSuggestion.status == SuggestionStatus.PENDING,
+            )
+            .with_for_update(skip_locked=True)
+        )
+    ).all()
+    now = utcnow()
+    approved = 0
+    for s in rows:
+        if not qualifies(rule, s):
+            continue
+        s.status, s.approved_value, s.reviewed_at, s.updated_at = (
+            SuggestionStatus.APPROVED,
+            s.proposed_value,
+            now,
+            now,
+        )
+        session.add(s)
+        session.add(
+            _change(s, "auto_approve", s.current_value, s.proposed_value, **change_details(rule, s))
+        )
+        approved += 1
+    await session.commit()
+    return approved
+
+
+async def auto_approval_preview(
+    session: AsyncSession, merchant: Merchant, config: CatalogConfig
+) -> dict[str, dict[str, Any]]:
+    """Per schema: how many pending suggestions its rule would approve now, and why the rest
+    would not (even while the rule is off, so it can be judged before turning it on)."""
+    rows = (
+        await session.exec(
+            select(AttributeSuggestion).where(
+                AttributeSuggestion.merchant_id == merchant.id,
+                AttributeSuggestion.status == SuggestionStatus.PENDING,
+            )
+        )
+    ).all()
+    out: dict[str, dict[str, Any]] = {}
+    for s in rows:
+        schema = config.schemas.get(s.schema_key)
+        if schema is None:
+            continue
+        entry = out.setdefault(s.schema_key, {"pending": 0, "qualifying": 0, "blocked_by": {}})
+        entry["pending"] += 1
+        unmet = unmet_conditions(schema.auto_approve, s)
+        if not unmet:
+            entry["qualifying"] += 1
+        for reason in unmet:
+            entry["blocked_by"][reason] = entry["blocked_by"].get(reason, 0) + 1
+    return out

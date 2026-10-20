@@ -159,11 +159,14 @@ export interface CatalogChange {
   id: number;
   product_gid: string;
   product_title: string;
+  suggestion_id?: string | null;
   attribute_key: string | null;
   action:
     | "approve"
+    | "auto_approve"
     | "edit_approve"
     | "reject"
+    | "reopen"
     | "publish"
     | "publish_failed"
     | "revert";
@@ -182,6 +185,95 @@ export interface DiscoveryTest {
   attributes: string[];
   products: number;
   supported: number;
+}
+
+/** A background publish job or discovery test run. */
+export interface CatalogJob {
+  id: string;
+  kind: "publish" | "discovery" | "refresh";
+  status: "queued" | "running" | "completed" | "failed";
+  source: string;
+  total: number;
+  processed: number;
+  succeeded: number;
+  failed: number;
+  created_at: string;
+  finished_at: string | null;
+  last_error: string | null;
+  results: Record<string, unknown>;
+}
+
+/** A publish job's `results`: entries keyed by suggestion id (failed or unchanged values),
+ * `taxonomy:<product>:<metafield>` for category metafields, and `skipped`. */
+export interface PublishOutcome {
+  status?: "failed" | "unchanged";
+  product_title?: string;
+  attribute_key?: string;
+  error?: string | null;
+}
+
+export interface CategoryMetafieldItem {
+  product_gid: string;
+  product_title: string;
+  attribute_key: string;
+  taxonomy_attribute: string;
+  metafield: string;
+  values: string[];
+  unmatched: string[];
+  action: "add" | "unchanged" | "skipped" | "written";
+  reason: string | null;
+  ok?: boolean;
+  error?: string | null;
+}
+
+export interface DiscoveryQueryResult {
+  schema_key: string;
+  schema_name: string;
+  query: string;
+  attributes: string[];
+  method: "storefront_mcp" | "admin_search";
+  error: string | null;
+  results: { product_gid: string; title: string }[];
+  returned: number;
+  in_schema: number;
+  answerable_products: number;
+  answerable_found: number;
+  recall: number | null;
+  precision: number | null;
+  missed_examples: string[];
+}
+
+export interface DiscoveryRunResults {
+  method: "storefront_mcp" | "admin_search";
+  fallback_reason: string | null;
+  result_limit: number;
+  questions: number;
+  avg_recall: number | null;
+  queries: DiscoveryQueryResult[];
+}
+
+export interface AutoApprovalRule {
+  enabled: boolean;
+  min_confidence: number;
+  attributes: string[] | null;
+}
+
+export interface AutoApprovalSchema {
+  schema_key: string;
+  schema_name: string;
+  rule: AutoApprovalRule;
+  attributes: string[];
+  pending: number;
+  qualifying: number;
+  blocked_by: Record<string, number>;
+  auto_approved_total: number;
+}
+
+export interface AutoApprovalReport {
+  schemas: AutoApprovalSchema[];
+  recent: CatalogChange[];
+  /** Current status of each suggestion in `recent`, by suggestion id. */
+  statuses: Record<string, string>;
 }
 
 export interface CatalogOverview {
@@ -203,6 +295,8 @@ export interface CatalogOverview {
   recent_jobs: EnrichmentJob[];
   recent_changes: CatalogChange[];
   discovery_tests: DiscoveryTest[];
+  discovery_run: CatalogJob | null;
+  publish_job: CatalogJob | null;
 }
 
 export interface CatalogProduct {
@@ -312,7 +406,7 @@ export interface ProductDetail {
 
 export interface ReviewAction {
   id: string;
-  action: "approve" | "edit" | "reject";
+  action: "approve" | "edit" | "reject" | "reopen";
   value?: unknown;
 }
 
@@ -339,15 +433,10 @@ export interface PublishPreviewItem {
 
 export interface PublishPreview {
   items: PublishPreviewItem[];
+  category_metafields: CategoryMetafieldItem[];
   writable: number;
   unchanged: number;
   blocked: number;
-}
-
-export interface PublishResult {
-  published: number;
-  unchanged: number;
-  failed: number;
 }
 
 export interface AttributeDefinition {
@@ -362,6 +451,7 @@ export interface AttributeDefinition {
   pattern: string | null;
   why: string;
   metafield: { namespace: string; key: string; type: string } | null;
+  taxonomy_attribute?: string | null;
 }
 
 export interface CategorySchema {
@@ -373,6 +463,7 @@ export interface CategorySchema {
   variant_options: string[];
   attributes: AttributeDefinition[];
   discovery_queries: { query: string; attributes: string[] }[];
+  auto_approve?: AutoApprovalRule;
 }
 
 export interface SchemaEntry {

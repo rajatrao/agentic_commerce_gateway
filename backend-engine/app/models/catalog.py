@@ -182,6 +182,55 @@ class EnrichmentJob(SQLModel, table=True):
     finished_at: datetime | None = Field(default=None, sa_column=tz_column(nullable=True))
 
 
+class CatalogJobKind(StrEnum):
+    PUBLISH = "publish"  # write approved suggestions to Shopify
+    REFRESH = "refresh"  # re-read and re-score one product
+    DISCOVERY = "discovery"  # run the schemas' shopper questions against storefront search
+
+
+class CatalogJob(SQLModel, table=True):
+    """Background catalog work on the same durable queue protocol as audits and enrichment.
+
+    A queued job with a `dedupe_key` absorbs later requests for the same work (for example a
+    burst of product webhooks becomes one refresh); a running job does not, so a change that
+    arrives mid-run is picked up by the next one.
+    """
+
+    __tablename__ = "catalog_jobs"
+    __table_args__ = (
+        Index("ix_catalog_jobs_status_next_attempt_at", "status", "next_attempt_at"),
+        Index("ix_catalog_jobs_merchant_id_kind_created_at", "merchant_id", "kind", "created_at"),
+        Index("ix_catalog_jobs_merchant_id_kind_dedupe_key", "merchant_id", "kind", "dedupe_key"),
+    )
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    merchant_id: uuid.UUID = Field(foreign_key="merchants.id", ondelete="CASCADE")
+    kind: CatalogJobKind = Field(
+        sa_column=Column(pg_enum(CatalogJobKind, "catalog_job_kind"), nullable=False)
+    )
+    status: RunStatus = Field(
+        default=RunStatus.QUEUED,
+        sa_column=Column(pg_enum(RunStatus, "run_status"), nullable=False),
+    )
+    dedupe_key: str | None = None
+    # Who asked: merchant | webhook | publish | revert
+    source: str = "merchant"
+    params: dict[str, Any] = _jsonb({})
+    total: int = 0
+    processed: int = 0
+    succeeded: int = 0
+    failed: int = 0
+    results: dict[str, Any] = _jsonb({})
+    attempts: int = Field(
+        default=0, sa_column=Column(SmallInteger, nullable=False, server_default="0")
+    )
+    next_attempt_at: datetime = Field(default_factory=utcnow, sa_column=tz_column())
+    heartbeat_at: datetime | None = Field(default=None, sa_column=tz_column(nullable=True))
+    last_error: str | None = None
+    created_at: datetime = Field(default_factory=utcnow, sa_column=tz_column())
+    finished_at: datetime | None = Field(default=None, sa_column=tz_column(nullable=True))
+
+
 class AttributeSuggestion(SQLModel, table=True):
     """A proposed value for one attribute of one product, awaiting (or past) merchant review.
 
@@ -227,6 +276,8 @@ class AttributeSuggestion(SQLModel, table=True):
     validation_errors: list[str] = Field(
         default_factory=list, sa_column=Column(ARRAY(String), nullable=False, server_default="{}")
     )
+    # The rule-based extractor read this same value from the product's own text.
+    rule_confirmed: bool = Field(default=False, sa_column_kwargs={"server_default": "false"})
     status: SuggestionStatus = Field(
         default=SuggestionStatus.PENDING,
         sa_column=Column(pg_enum(SuggestionStatus, "suggestion_status"), nullable=False),
@@ -255,7 +306,7 @@ class CatalogChange(SQLModel, table=True):
         default=None, foreign_key="attribute_suggestions.id", ondelete="SET NULL"
     )
     attribute_key: str | None = None
-    # approve | edit_approve | reject | publish | publish_failed | revert
+    # approve | auto_approve | edit_approve | reject | reopen | publish | publish_failed | revert
     action: str
     before: Any = _jsonb(nullable=True)
     after: Any = _jsonb(nullable=True)

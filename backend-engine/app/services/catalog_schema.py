@@ -87,6 +87,10 @@ class AttributeDefinition(BaseModel):
     pattern: str | None = Field(default=None, max_length=300)
     why: str = Field(default="", max_length=400)
     metafield: MetafieldTarget | None = None
+    # Name of the matching attribute in Shopify's standard product taxonomy (e.g. "Color").
+    # When the product's Shopify category has a choice-list attribute with this name, approved
+    # values that match its taxonomy values are also written to the category metafield.
+    taxonomy_attribute: str | None = Field(default=None, max_length=80)
 
     @field_validator("pattern")
     @classmethod
@@ -113,6 +117,22 @@ class DiscoveryQuery(BaseModel):
     attributes: list[str] = Field(min_length=1, max_length=10)
 
 
+class AutoApproval(BaseModel):
+    """Opt-in automatic approval for one schema. Off by default.
+
+    A suggestion is approved without review only when all of these hold: the attribute is
+    listed (or no list is given), the value fills an empty attribute (it never replaces one),
+    it passed validation with no warnings, the rule-based extractor read the same value from
+    the product's own text, and its confidence is at least `min_confidence`. Approval is not
+    publishing: auto-approved values still go through the write preview, and every one is
+    recorded in the auto-approval report where it can be sent back to review.
+    """
+
+    enabled: bool = False
+    min_confidence: float = Field(default=0.9, ge=0.5, le=1.0)
+    attributes: list[str] | None = Field(default=None, max_length=40)
+
+
 class CategorySchema(BaseModel):
     key: str = Field(pattern=KEY_RE)
     name: str = Field(min_length=1, max_length=80)
@@ -123,12 +143,16 @@ class CategorySchema(BaseModel):
     variant_options: list[str] = Field(default_factory=list)
     attributes: list[AttributeDefinition] = Field(min_length=1, max_length=40)
     discovery_queries: list[DiscoveryQuery] = Field(default_factory=list, max_length=20)
+    auto_approve: AutoApproval = Field(default_factory=AutoApproval)
 
     @model_validator(mode="after")
     def _consistent(self) -> CategorySchema:
         keys = [a.key for a in self.attributes]
         if len(keys) != len(set(keys)):
             raise ValueError("attribute keys must be unique")
+        unknown_auto = set(self.auto_approve.attributes or []) - set(keys)
+        if unknown_auto:
+            raise ValueError(f"auto-approval lists unknown attributes: {sorted(unknown_auto)}")
         for q in self.discovery_queries:
             unknown = set(q.attributes) - set(keys)
             if unknown:
@@ -164,6 +188,7 @@ _COMMON: dict[str, dict[str, Any]] = {
         "required": True, "allowed_values": MATERIALS,
         "why": "Shoppers filter and compare on material (durability, weight, care).",
         "metafield": _mf("material", "single_line_text_field"),
+        "taxonomy_attribute": "Material",
     },
     "weight": {
         "key": "weight", "label": "Weight", "type": "weight", "unit": "g", "importance": "high",
@@ -176,6 +201,7 @@ _COMMON: dict[str, dict[str, Any]] = {
         "required": True, "allowed_values": USES,
         "why": "Agents match products to activities ('a pack for a 3-day hike').",
         "metafield": _mf("intended_use", "list.single_line_text_field"),
+        "taxonomy_attribute": "Activity",
     },
     "care_instructions": {
         "key": "care_instructions", "label": "Care instructions", "type": "text",

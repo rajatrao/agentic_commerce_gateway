@@ -1,6 +1,6 @@
 # Agentic Commerce Gateway: architecture
 
-How the system is built today, read from the code on branch `feature/meta-mapping-rules` (everything on `main` plus the Meta mapping rules page), with the unmerged `fix/theme-extension` changes called out in section 12. For the step-by-step journey see [flow.md](flow.md). For the catalog features in depth see [catalog-audit.md](catalog-audit.md) and [catalog-enrichment.md](catalog-enrichment.md); those two also define the ecommerce terms used here (variant, metafield, taxonomy and so on).
+How the system is built today, read from the code on `main` (as of PR #14, which added the Meta mapping rules page, and PR #13, the theme extension fix). For the step-by-step journey see [flow.md](flow.md). For the catalog features in depth see [catalog-audit.md](catalog-audit.md) and [catalog-enrichment.md](catalog-enrichment.md); those two also define the ecommerce terms used here (variant, metafield, taxonomy and so on).
 
 The original planning blueprint this replaces is in git history (`git show f2e0cf0:docs/architecture.md`).
 
@@ -188,7 +188,7 @@ Refreshes get their own worker so a long publish never delays them. All four sha
 
 **Checkout handoff.** `checkout_url` is a Shopify cart permalink (`https://<shop>/cart/<variant>:<qty>,…`) that prefills email and address and carries the hidden cart attribute `_agentic_cart_id`. ACP returns it as `continue_url`; UCP returns status `requires_escalation`; `complete` answers `409 requires_escalation`; the UCP profile lists no payment handlers. This keeps the app inside Shopify App Store rule 1.1.2 (never bypass Shopify checkout).
 
-**Order linking.** The shopper pays on Shopify → `orders/create` → the cart becomes `completed` with the order id, name and status URL. (Currently off on `fix/theme-extension`; see section 12.)
+**Order linking.** The shopper pays on Shopify → `orders/create` → the cart becomes `completed` with the order id, name and status URL. The webhook subscription is currently turned off; see section 12.
 
 **Shopify token.** Any Shopify call asks `ShopifyTokenProvider` → cache hit, or `POST {frontend}/internal/admin-token` with a backend JWT → frontend-ui refreshes via its session if needed → fallback to the decrypted token from install.
 
@@ -282,10 +282,8 @@ Step-by-step commands are in the [README](../README.md).
 - **Catalog intelligence.** Category schemas, readiness, enrichment, review, write-back, auto-approval, refreshes and the store search test were added on top of the AI Discovery Score.
 - **Meta mapping rules page.** Mapping rules were API-only; they now have a page with a live preview, and changing a rule clears the `llm.txt` cache.
 
-## 12. Not yet merged
+## 12. Current caveats
 
-| Branch | Change | Effect |
-|---|---|---|
-| `feature/meta-mapping-rules` | Meta mapping rules page, `POST /mapping-rules/preview`, `PATCH /mapping-rules/{id}`, `llm.txt` cache invalidation on rule changes. | Documented above as current. |
-| `fix/theme-extension` | Fixes the theme extension so `shopify app dev` starts: renames the locale file to `en.default.schema.json`, adds the extension `uid`, and moves the WebSite SearchAction URL into a Liquid `assign` (an output tag ends at the first closing brace, and the URL template contains one). Fills in the app `client_id`. | Theme blocks deploy correctly. |
-| `fix/theme-extension` | **Turns off the `orders/create` webhook** until the app is granted protected customer data access, which Shopify requires before an app can subscribe to order topics. | While it is off, agent carts are **not** linked to the orders they produce; the Agent checkouts page shows carts and links but never "Ordered". Re-enable the subscription in `shopify.app.toml` once access is granted. |
+- **Order linking is switched off.** PR #13 commented out the `orders/create` subscription in `frontend-ui/shopify.app.toml`, because Shopify refuses order-topic subscriptions (and `shopify app dev` fails) until the app has protected customer data access. The handler code is still in place. While it is off, agent carts are never marked `completed` and the Agent checkouts page never shows the resulting order; the shopper's purchase itself is unaffected. Re-enable the subscription once access is granted in the Partner dashboard under API access.
+- **Theme extension details.** The same PR renamed the locale file to `en.default.schema.json`, added the extension `uid`, and builds the WebSite SearchAction URL with a Liquid `assign`, because an output tag ends at the first closing brace and the URL template contains one.
+- **Not tested against a live store** for the taxonomy metaobject writes and the Storefront MCP response format; both follow Shopify's documentation and are exercised against a fake API in tests.

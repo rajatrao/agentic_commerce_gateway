@@ -2,17 +2,21 @@
 
 import re
 import uuid
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.api.deps import (
     CurrentMerchant,
+    HttpClientDep,
     SessionDep,
     SettingsDep,
+    TokenProviderDep,
     require_service_scopes,
 )
 from app.jobs.audit_worker import AuditWorker
+from app.jobs.catalog_audit import shopify_client_for
 from app.models import AuditRun, MappingSource, MetaMappingRule
 from app.repositories.audits import AuditRepository
 from app.repositories.mapping_rules import MappingRuleRepository
@@ -22,12 +26,16 @@ from app.schemas.audit import (
     AuditSummaryOut,
     FaqList,
     IssueCount,
+    MappingPreviewOut,
     MappingRuleIn,
     MappingRuleOut,
+    MappingRulePatch,
     ProductAuditOut,
     ProductAuditPage,
 )
 from app.services.catalog_auditor import ISSUE_MESSAGES
+from app.services.shopify_client import MAPPING_PREVIEW_QUERY, ShopifyAuthError, ShopifyError
+from app.services.tag_mapper import MappingRule, preview_rule
 
 router = APIRouter(prefix="/merchant", tags=["catalog"])
 write = [Depends(require_service_scopes("merchant:write"))]
@@ -158,15 +166,11 @@ async def list_mapping_rules(
     return [_rule_out(r) for r in await MappingRuleRepository(session).list_for(merchant.id)]
 
 
-@router.post(
-    "/mapping-rules",
-    response_model=MappingRuleOut,
-    status_code=status.HTTP_201_CREATED,
-    dependencies=write,
-)
-async def create_mapping_rule(
-    body: MappingRuleIn, merchant: CurrentMerchant, session: SessionDep
-) -> MappingRuleOut:
+# Products a rule preview reads from Shopify: four pages of MAPPING_PREVIEW_QUERY.
+PREVIEW_PRODUCTS = 100
+
+
+def _validate_rule(body: MappingRuleIn) -> None:
     try:
         re.compile(body.match_pattern)
     except re.error as exc:
@@ -175,6 +179,23 @@ async def create_mapping_rule(
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT, "metafield rules need source_key 'namespace.key'"
         )
+
+
+async def _rules_changed(merchant: CurrentMerchant, session: SessionDep, ttl: int) -> None:
+    """The llm.txt feed applies the rules, so a cached copy is stale after any change."""
+    await LlmTxtCacheRepository(session, ttl).invalidate(merchant.shop_domain)
+
+
+@router.post(
+    "/mapping-rules",
+    response_model=MappingRuleOut,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=write,
+)
+async def create_mapping_rule(
+    body: MappingRuleIn, merchant: CurrentMerchant, session: SessionDep, settings: SettingsDep
+) -> MappingRuleOut:
+    _validate_rule(body)
     rule = MetaMappingRule(
         merchant_id=merchant.id,
         source_type=MappingSource(body.source_type),
@@ -185,17 +206,76 @@ async def create_mapping_rule(
         priority=body.priority,
         active=body.active,
     )
-    return _rule_out(await MappingRuleRepository(session).add(rule))
+    out = _rule_out(await MappingRuleRepository(session).add(rule))
+    await _rules_changed(merchant, session, settings.llm_txt_cache_seconds)
+    return out
+
+
+@router.post("/mapping-rules/preview", response_model=MappingPreviewOut)
+async def preview_mapping_rule(
+    body: MappingRuleIn,
+    merchant: CurrentMerchant,
+    session: SessionDep,
+    settings: SettingsDep,
+    http: HttpClientDep,
+    tokens: TokenProviderDep,
+) -> MappingPreviewOut:
+    """What the rule would extract from the store's first active products, read live from
+    Shopify. Saves nothing."""
+    _validate_rule(body)
+    rule = MappingRule(
+        source_type=body.source_type,
+        source_key=body.source_key,
+        match_pattern=body.match_pattern,
+        target_property=body.target_property,
+        transform=body.transform,
+        priority=body.priority,
+    )
+    client = shopify_client_for(merchant, http, tokens, settings)
+    products: list[dict[str, Any]] = []
+    try:
+        async for product in client.paginate(MAPPING_PREVIEW_QUERY, ["products"]):
+            products.append(product)
+            if len(products) >= PREVIEW_PRODUCTS:
+                break
+    except ShopifyAuthError as exc:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Shopify rejected the app's access token. Reinstall the app.",
+        ) from exc
+    except ShopifyError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"Shopify request failed: {exc}") from exc
+    others = await MappingRuleRepository(session).domain_rules(merchant.id)
+    return MappingPreviewOut.model_validate(preview_rule(rule, products, others))
+
+
+@router.patch("/mapping-rules/{rule_id}", response_model=MappingRuleOut, dependencies=write)
+async def update_mapping_rule(
+    rule_id: uuid.UUID,
+    body: MappingRulePatch,
+    merchant: CurrentMerchant,
+    session: SessionDep,
+    settings: SettingsDep,
+) -> MappingRuleOut:
+    repo = MappingRuleRepository(session)
+    rule = await repo.get(merchant.id, rule_id)
+    if rule is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "rule not found")
+    rule.active = body.active
+    out = _rule_out(await repo.add(rule))
+    await _rules_changed(merchant, session, settings.llm_txt_cache_seconds)
+    return out
 
 
 @router.delete(
     "/mapping-rules/{rule_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=write
 )
 async def delete_mapping_rule(
-    rule_id: uuid.UUID, merchant: CurrentMerchant, session: SessionDep
+    rule_id: uuid.UUID, merchant: CurrentMerchant, session: SessionDep, settings: SettingsDep
 ) -> None:
     if not await MappingRuleRepository(session).delete(merchant.id, rule_id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "rule not found")
+    await _rules_changed(merchant, session, settings.llm_txt_cache_seconds)
 
 
 # ----------------------------------------------------------------- brand FAQs (llm.txt)

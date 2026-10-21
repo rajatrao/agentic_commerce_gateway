@@ -25,6 +25,7 @@ export default function App() {
         <s-link href="/app/activity">Sync and jobs</s-link>
         <s-link href="/app/schemas">Category schemas</s-link>
         <s-link href="/app/mappings">Metafield mapping</s-link>
+        <s-link href="/app/mapping-rules">Meta mapping rules</s-link>
         <s-link href="/app/settings">Settings</s-link>
         <s-link href="/app/agents">Agent access</s-link>
         <s-link href="/app/checkouts">Agent checkouts</s-link>

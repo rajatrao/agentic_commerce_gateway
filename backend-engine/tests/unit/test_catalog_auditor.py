@@ -17,7 +17,7 @@ from app.services.catalog_auditor import (
     score_product,
     summarize,
 )
-from app.services.tag_mapper import MappingRule, apply_rules
+from app.services.tag_mapper import MappingRule, apply_rules, preview_rule
 
 PRODUCTS = json.loads((Path(__file__).parent.parent / "fixtures/shopify/products.json").read_text())
 
@@ -121,6 +121,28 @@ def test_mapping_rule_priority_and_metafield_source() -> None:
         MappingRule("vendor", r"(.+)", "brand", priority=5),
     ]
     assert apply_rules(p, rules) == {"care": "Machine wash cold", "brand": "Acme Outfitters"}
+
+
+def test_preview_rule_reports_matches_unmatched_values_and_overrides() -> None:
+    products = [
+        {"id": "P1", "title": "Pack", "tags": ["material:ripstop-nylon", "sale"]},
+        {"id": "P2", "title": "Tent", "tags": ["Material:polyester"]},
+        {"id": "P3", "title": "Hat", "tags": ["Sale", "wool"]},
+    ]
+    rule = MappingRule("tag", r"material:(.+)", "material", transform={"case": "title"})
+    stronger = MappingRule("tag", r"material:polyester", "material", priority=1)
+    weaker = MappingRule("tag", r"(.+)", "material", priority=500)
+    out = preview_rule(rule, products, [stronger, weaker])
+    assert out["products_scanned"] == 3
+    assert out["matched"] == 2
+    rows = [
+        (m["title"], m["source_value"], m["value"], m["overridden_by_rule"]) for m in out["matches"]
+    ]
+    assert rows == [
+        ("Pack", "material:ripstop-nylon", "Ripstop Nylon", False),
+        ("Tent", "Material:polyester", "Polyester", True),
+    ]
+    assert out["unmatched_values"] == ["sale", "wool"]  # case-insensitive de-duplication
 
 
 def test_content_hash_ignores_updated_at() -> None:

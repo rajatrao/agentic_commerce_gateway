@@ -263,6 +263,23 @@ query EnrichProduct($id: ID!) {{
 }}
 """
 
+# Only the fields mapping rules read, so a preview can scan more products per request.
+MAPPING_PREVIEW_QUERY = """
+query MappingPreviewProducts($cursor: String) {
+  products(first: 25, after: $cursor, query: "status:active", sortKey: ID) {
+    nodes {
+      id
+      title
+      vendor
+      productType
+      tags
+      metafields(first: 20) { nodes { namespace key value } }
+    }
+    pageInfo { hasNextPage endCursor }
+  }
+}
+"""
+
 SHOP_QUERY = """
 query ShopForLlmTxt {
   shop {

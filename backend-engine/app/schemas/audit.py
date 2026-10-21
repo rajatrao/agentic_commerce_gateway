@@ -62,6 +62,27 @@ class MappingRuleOut(MappingRuleIn):
     id: uuid.UUID
 
 
+class MappingRulePatch(BaseModel):
+    active: bool
+
+
+class MappingMatch(BaseModel):
+    product_gid: str
+    title: str
+    source_value: str
+    value: str
+    # A lower-priority-number active rule already sets this property for the product.
+    overridden_by_rule: bool = False
+
+
+class MappingPreviewOut(BaseModel):
+    products_scanned: int
+    matched: int
+    matches: list[MappingMatch]
+    # Values the rule looked at but did not match, to help write the pattern.
+    unmatched_values: list[str]
+
+
 class Faq(BaseModel):
     question: str = Field(min_length=3, max_length=500)
     answer: str = Field(min_length=1, max_length=4000)

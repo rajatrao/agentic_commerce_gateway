@@ -11,6 +11,9 @@ import type {
   CatalogSettings,
   CategorySchema,
   EnrichmentJob,
+  MappingPreview,
+  MappingRule,
+  MappingRuleInput,
   MetafieldMappingEntry,
   Page,
   ProductDetail,
@@ -424,6 +427,45 @@ export const backend = {
       shop,
       `${CATALOG}/mappings/${encodeURIComponent(attributeKey)}`,
       { method: "PUT", body },
+    );
+  },
+
+  mappingRules(shop: string) {
+    return backendRequest<MappingRule[]>(
+      shop,
+      "/api/v1/merchant/mapping-rules",
+    );
+  },
+
+  createMappingRule(shop: string, body: MappingRuleInput) {
+    return backendRequest<MappingRule>(shop, "/api/v1/merchant/mapping-rules", {
+      method: "POST",
+      body,
+    });
+  },
+
+  /** Reads live from Shopify, so it gets a longer timeout. Saves nothing. */
+  previewMappingRule(shop: string, body: MappingRuleInput) {
+    return backendRequest<MappingPreview>(
+      shop,
+      "/api/v1/merchant/mapping-rules/preview",
+      { method: "POST", body, timeoutMs: 60_000 },
+    );
+  },
+
+  setMappingRuleActive(shop: string, id: string, active: boolean) {
+    return backendRequest<MappingRule>(
+      shop,
+      `/api/v1/merchant/mapping-rules/${encodeURIComponent(id)}`,
+      { method: "PATCH", body: { active } },
+    );
+  },
+
+  deleteMappingRule(shop: string, id: string) {
+    return backendRequest<void>(
+      shop,
+      `/api/v1/merchant/mapping-rules/${encodeURIComponent(id)}`,
+      { method: "DELETE" },
     );
   },
 

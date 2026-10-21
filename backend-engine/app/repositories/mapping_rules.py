@@ -39,9 +39,13 @@ class MappingRuleRepository:
         await self.session.refresh(rule)
         return rule
 
-    async def delete(self, merchant_id: uuid.UUID, rule_id: uuid.UUID) -> bool:
+    async def get(self, merchant_id: uuid.UUID, rule_id: uuid.UUID) -> MetaMappingRule | None:
         rule = await self.session.get(MetaMappingRule, rule_id)
-        if rule is None or rule.merchant_id != merchant_id:
+        return rule if rule is not None and rule.merchant_id == merchant_id else None
+
+    async def delete(self, merchant_id: uuid.UUID, rule_id: uuid.UUID) -> bool:
+        rule = await self.get(merchant_id, rule_id)
+        if rule is None:
             return False
         await self.session.delete(rule)
         await self.session.commit()

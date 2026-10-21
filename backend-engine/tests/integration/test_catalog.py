@@ -217,6 +217,40 @@ def test_mapping_rules_crud_and_effect_on_score(client: TestClient) -> None:
     )
 
 
+def test_mapping_rule_preview_and_toggle(client: TestClient) -> None:
+    shop = "audit-preview.myshopify.com"
+    install(client, shop)
+    sparse = copy.deepcopy(PRODUCTS["sparse"])
+    sparse["tags"] = ["brand:acme-gear", "summer"]
+    rule = {"source_type": "tag", "match_pattern": "brand:(.+)", "target_property": "brand"}
+    with respx.mock() as router:
+        mock_shopify(router, shop, [sparse, copy.deepcopy(PRODUCTS["partial"])])
+        resp = client.post("/api/v1/merchant/mapping-rules/preview", json=rule, headers=auth(shop))
+    assert resp.status_code == 200, resp.text
+    preview = resp.json()
+    assert preview["products_scanned"] == 2 and preview["matched"] == 1
+    assert preview["matches"][0]["value"] == "acme gear"
+    assert "summer" in preview["unmatched_values"]
+    assert client.get("/api/v1/merchant/mapping-rules", headers=auth(shop)).json() == []
+
+    bad = client.post(
+        "/api/v1/merchant/mapping-rules/preview",
+        json={**rule, "match_pattern": "("},
+        headers=auth(shop),
+    )
+    assert bad.status_code == 422
+
+    rule_id = client.post("/api/v1/merchant/mapping-rules", json=rule, headers=auth(shop)).json()[
+        "id"
+    ]
+    url = f"/api/v1/merchant/mapping-rules/{rule_id}"
+    off = client.patch(url, json={"active": False}, headers=auth(shop))
+    assert off.status_code == 200 and off.json()["active"] is False
+    other = "preview-other.myshopify.com"
+    install(client, other)
+    assert client.patch(url, json={"active": True}, headers=auth(other)).status_code == 404
+
+
 def test_llm_txt_streams_caches_and_includes_faqs(client: TestClient) -> None:
     shop = "llm-e2e.myshopify.com"
     install(client, shop)

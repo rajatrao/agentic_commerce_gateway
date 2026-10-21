@@ -497,3 +497,32 @@ export interface CatalogSettings {
   auto_publish: boolean;
   auto_publish_note: string;
 }
+
+export type MappingSourceType = "tag" | "metafield" | "product_type" | "vendor";
+
+export interface MappingRuleInput {
+  source_type: MappingSourceType;
+  source_key: string;
+  match_pattern: string;
+  target_property: string;
+  transform: { value?: string; case?: "title" | "upper" | "lower" };
+  priority: number;
+  active: boolean;
+}
+
+export interface MappingRule extends MappingRuleInput {
+  id: string;
+}
+
+export interface MappingPreview {
+  products_scanned: number;
+  matched: number;
+  matches: {
+    product_gid: string;
+    title: string;
+    source_value: string;
+    value: string;
+    overridden_by_rule: boolean;
+  }[];
+  unmatched_values: string[];
+}

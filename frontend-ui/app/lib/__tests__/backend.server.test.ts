@@ -29,6 +29,40 @@ describe("backend client", () => {
     vi.unstubAllGlobals();
   });
 
+  it("previews a mapping rule with a longer timeout and patches active", async () => {
+    fetchMock.mockImplementation(async () =>
+      Response.json({
+        products_scanned: 0,
+        matched: 0,
+        matches: [],
+        unmatched_values: [],
+      }),
+    );
+    const rule = {
+      source_type: "tag" as const,
+      source_key: "",
+      match_pattern: "brand:(.+)",
+      target_property: "brand",
+      transform: {},
+      priority: 100,
+      active: true,
+    };
+    await backend.previewMappingRule("acme.myshopify.com", rule);
+    await backend.setMappingRuleActive("acme.myshopify.com", "r 1", false);
+
+    const [previewUrl, previewInit] = fetchMock.mock.calls[0];
+    expect(previewUrl).toBe(
+      "http://backend.internal:8000/api/v1/merchant/mapping-rules/preview",
+    );
+    expect(JSON.parse(previewInit.body)).toEqual(rule);
+    const [patchUrl, patchInit] = fetchMock.mock.calls[1];
+    expect(patchUrl).toBe(
+      "http://backend.internal:8000/api/v1/merchant/mapping-rules/r%201",
+    );
+    expect(patchInit.method).toBe("PATCH");
+    expect(JSON.parse(patchInit.body)).toEqual({ active: false });
+  });
+
   it("sends a bearer service token and JSON body", async () => {
     fetchMock.mockResolvedValue(Response.json({ id: "1", passed: true }));
     await backend.runInstallationCheck("acme.myshopify.com", "acme.example");

@@ -80,3 +80,60 @@ def apply_rules(product: dict[str, Any], rules: list[MappingRule]) -> dict[str, 
                 result[rule.target_property] = value
                 break
     return result
+
+
+def preview_rule(
+    rule: MappingRule,
+    products: list[dict[str, Any]],
+    others: list[MappingRule],
+    *,
+    max_matches: int = 25,
+    max_unmatched: int = 20,
+) -> dict[str, Any]:
+    """What `rule` alone extracts from `products`. `others` are the merchant's active rules:
+    a match is flagged when one of them already sets the same property with a lower
+    priority number, because that rule would win."""
+    stronger = [
+        r
+        for r in others
+        if r.target_property == rule.target_property and r.priority < rule.priority
+    ]
+    pattern = rule.compiled()
+    matches: list[dict[str, Any]] = []
+    matched = 0
+    unmatched: list[str] = []
+    seen: set[str] = set()
+    for product in products:
+        source = None
+        for candidate in _candidates(rule, product):
+            text = candidate.strip()
+            if not text:
+                continue
+            if pattern.fullmatch(text):
+                source = source or text
+            elif text.lower() not in seen and len(unmatched) < max_unmatched:
+                seen.add(text.lower())
+                unmatched.append(text)
+        # apply_rules takes the first matching value, the same one `source` holds.
+        value = apply_rules(product, [rule]).get(rule.target_property) if source else None
+        if not value:
+            continue
+        matched += 1
+        if len(matches) < max_matches:
+            matches.append(
+                {
+                    "product_gid": str(product.get("id") or ""),
+                    "title": str(product.get("title") or ""),
+                    "source_value": source,
+                    "value": value,
+                    "overridden_by_rule": bool(
+                        stronger and rule.target_property in apply_rules(product, stronger)
+                    ),
+                }
+            )
+    return {
+        "products_scanned": len(products),
+        "matched": matched,
+        "matches": matches,
+        "unmatched_values": unmatched,
+    }

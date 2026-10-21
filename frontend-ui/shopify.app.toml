@@ -37,10 +37,13 @@ api_version = "2026-10"
   topics = ["app/scopes_update"]
   uri = "/webhooks/app/scopes_update"
 
+  # orders/create is turned off until the app has protected customer data access, which Shopify
+  # requires before an app can subscribe to order topics (shopify app dev fails without it).
+  # Re-enable it once access is granted. Without it, agent carts are not linked to orders.
   # Handled by: /app/routes/webhooks.orders.create.tsx (forwards to backend-engine)
-  [[webhooks.subscriptions]]
-  topics = ["orders/create"]
-  uri = "/webhooks/orders/create"
+  # [[webhooks.subscriptions]]
+  # topics = ["orders/create"]
+  # uri = "/webhooks/orders/create"
 
   # Handled by: /app/routes/webhooks.products.tsx (forwards to backend-engine)
   [[webhooks.subscriptions]]

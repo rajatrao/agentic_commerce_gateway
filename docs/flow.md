@@ -126,4 +126,4 @@ flowchart TD
 
 **Mapping rules.** If a merchant already keeps facts in tags or metafields, a mapping rule credits them on the next audit without enrichment. The rule page previews matches against the store's first 100 active products before saving.
 
-**Order linking is off for now.** On the `fix/theme-extension` branch the `orders/create` subscription is commented out, because Shopify refuses order-topic subscriptions until the app has protected customer data access. Until it is turned back on, a cart is never marked `completed` when the shopper pays, and the Agent checkouts page does not show the order. The shopper's purchase itself is unaffected.
+**Order linking is off for now.** The `orders/create` subscription is commented out in `shopify.app.toml`, because Shopify refuses order-topic subscriptions until the app has protected customer data access. Until it is turned back on, a cart is never marked `completed` when the shopper pays, and the Agent checkouts page does not show the order. The shopper's purchase itself is unaffected.

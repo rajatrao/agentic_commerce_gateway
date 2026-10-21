@@ -8,7 +8,7 @@ A Shopify app that makes a merchant's catalog discoverable and purchasable by AI
 | [`backend-engine/`](backend-engine) | Python 3.12, FastAPI, SQLModel, Alembic | Business logic, protocol adapters (UCP/ACP/MCP), webhooks, checkout handoff |
 | `infra/`, `docker-compose*.yml` | Docker, Postgres 16 | Local stack and production smoke tests |
 
-Both services share one Postgres database. Prisma owns the `shopify_app` schema (Shopify sessions only); Alembic owns the `gateway` schema (all domain tables). frontend-ui never reads `gateway` tables directly: it calls backend-engine with a 60-second Ed25519-signed service JWT. See [docs/architecture.md](docs/architecture.md) for how the system is built and [docs/flow.md](docs/flow.md) for the end-to-end flow from install to an agent sending a buyer to checkout. New to ecommerce? [docs/catalog-audit.md](docs/catalog-audit.md) explains the catalog audit and its scores from first principles, and [docs/catalog-enrichment.md](docs/catalog-enrichment.md) explains how missing product data is found, reviewed and written back.
+Both services share one Postgres database. Prisma owns the `shopify_app` schema (Shopify sessions only); Alembic owns the `gateway` schema (all domain tables). frontend-ui never reads `gateway` tables directly: it calls backend-engine with a 60-second Ed25519-signed service JWT. See [docs/architecture.md](docs/architecture.md) for how the system is built and [docs/flow.md](docs/flow.md) for the end-to-end flow from install to an agent sending a buyer to checkout. New to ecommerce? [docs/catalog-audit.md](docs/catalog-audit.md) explains the catalog audit and its scores from first principles, [docs/catalog-enrichment.md](docs/catalog-enrichment.md) explains how missing product data is found, reviewed and written back, and [docs/agentic-commerce.md](docs/agentic-commerce.md) explains how AI agents shop the store through ACP, UCP and MCP while merchants never see those details.
 
 ## Status
 
@@ -133,7 +133,7 @@ Catalog endpoints live under `/api/v1/merchant/catalog` (overview, products, fin
 
 ## Agent checkout protocols
 
-Merchants create an API key per agent on the **Agent access** page (one protocol per key, argon2-hashed, revocable). Agents send it as `Authorization: Bearer acg_live_…`.
+Merchants create an API key per agent on the **Agent access** page (one protocol per key, argon2-hashed, revocable). Agents send it as `Authorization: Bearer acg_live_…`. New to agentic commerce? Start with [docs/agentic-commerce.md](docs/agentic-commerce.md).
 
 | Protocol | Endpoints on backend-engine | Notes |
 |---|---|---|

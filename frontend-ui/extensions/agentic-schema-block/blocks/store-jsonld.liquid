@@ -1,6 +1,11 @@
 {%- comment -%}
   Agentic Commerce Gateway: Organization + WebSite JSON-LD, injected site-wide as an app embed.
 {%- endcomment -%}
+{%- comment -%}
+  Assigned in a tag because an output tag ends at the first closing brace, and the
+  search URL template contains one.
+{%- endcomment -%}
+{%- assign search_target = shop.url | append: routes.search_url | append: '?q={search_term_string}' -%}
 <script type="application/ld+json" data-acg-block="store-jsonld">
   {
     "@context": "https://schema.org",
@@ -22,7 +27,7 @@
         "publisher": { "@id": {{ shop.url | append: '/#organization' | json }} },
         "potentialAction": {
           "@type": "SearchAction",
-          "target": {{ shop.url | append: routes.search_url | append: '?q={search_term_string}' | json }},
+          "target": {{ search_target | json }},
           "query-input": "required name=search_term_string"
         }
       }

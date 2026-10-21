@@ -8,7 +8,7 @@ A Shopify app that makes a merchant's catalog discoverable and purchasable by AI
 | [`backend-engine/`](backend-engine) | Python 3.12, FastAPI, SQLModel, Alembic | Business logic, protocol adapters (UCP/ACP/MCP), webhooks, checkout handoff |
 | `infra/`, `docker-compose*.yml` | Docker, Postgres 16 | Local stack and production smoke tests |
 
-Both services share one Postgres database. Prisma owns the `shopify_app` schema (Shopify sessions only); Alembic owns the `gateway` schema (all domain tables). frontend-ui never reads `gateway` tables directly: it calls backend-engine with a 60-second Ed25519-signed service JWT. See [docs/architecture.md](docs/architecture.md) for the full blueprint. For the end-to-end flow from install to an agent sending a buyer to checkout, see [docs/flow.md](docs/flow.md).
+Both services share one Postgres database. Prisma owns the `shopify_app` schema (Shopify sessions only); Alembic owns the `gateway` schema (all domain tables). frontend-ui never reads `gateway` tables directly: it calls backend-engine with a 60-second Ed25519-signed service JWT. See [docs/architecture.md](docs/architecture.md) for how the system is built and [docs/flow.md](docs/flow.md) for the end-to-end flow from install to an agent sending a buyer to checkout. New to ecommerce? [docs/catalog-audit.md](docs/catalog-audit.md) explains the catalog audit and its scores from first principles, and [docs/catalog-enrichment.md](docs/catalog-enrichment.md) explains how missing product data is found, reviewed and written back.
 
 ## Status
 
@@ -91,7 +91,7 @@ Pushes to `main` redeploy only the service whose folder changed. Migrations run 
 
 ## AI Discovery Score
 
-Each active product is scored 0-100 across eight weighted dimensions (identity 15, description 20, media 15, identifiers 15, offers 10, taxonomy 10, attributes 10, reviews 5). The store's score is the average. Meta-mapping rules (`/api/v1/merchant/mapping-rules`) let merchants credit facts encoded in tags or metafields, e.g. a `brand:(.+)` tag rule. See [`catalog_auditor.py`](backend-engine/app/services/catalog_auditor.py) for the exact rules.
+Each active product is scored 0-100 across eight weighted dimensions (identity 15, description 20, media 15, identifiers 15, offers 10, taxonomy 10, attributes 10, reviews 5). The store's score is the average. Meta mapping rules let merchants credit facts encoded in tags, vendor, product type or metafields, e.g. a `brand:(.+)` tag rule; the **Meta mapping rules** page previews a rule against the store's first 100 active products before saving it (`/api/v1/merchant/mapping-rules`, `POST …/preview`). See [docs/catalog-audit.md](docs/catalog-audit.md) for every rule and a worked example.
 
 ## Catalog intelligence
 
@@ -188,15 +188,19 @@ backend-engine/
   app/services/     business logic: installation_checker, catalog_auditor, tag_mapper,
                     llm_txt_renderer, shopify_client, cart_manager, agent_keys,
                     catalog_schema, readiness, attribute_extractor, ai_enricher,
-                    enrichment, metafield_writer, catalog_publisher, product_sync
-  app/jobs/         durable catalog-audit and enrichment workers (Postgres job queue)
+                    enrichment, auto_approval, metafield_writer, taxonomy_writer,
+                    catalog_publisher, product_sync, product_refresh, discovery_probe,
+                    order_linker
+  app/jobs/         durable workers on Postgres queues: audits, enrichment, and catalog
+                    jobs (refresh, publish, store search test)
   app/repositories/ database access
   app/models/       SQLModel tables (gateway schema)
   migrations/       Alembic
 frontend-ui/
   app/lib/          service-JWT minting and the typed backend client
   app/routes/       dashboard, catalog audit, product detail, review queue, sync and jobs,
-                    settings, category schemas, metafield mapping, auth, webhooks
+                    auto-approval, settings, category schemas, metafield mapping,
+                    meta mapping rules, agent access, agent checkouts, auth, webhooks
                     (forwarded to backend-engine)
   extensions/agentic-schema-block/  theme app extension (JSON-LD blocks)
   prisma/           Shopify session storage (shopify_app schema)

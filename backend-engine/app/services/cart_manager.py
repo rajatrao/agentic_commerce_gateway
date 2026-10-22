@@ -38,9 +38,10 @@ VARIANT_GID = "gid://shopify/ProductVariant/"
 
 
 class ShopifyQuery(Protocol):
-    async def query(
-        self, query: str, variables: dict[str, Any] | None = None
-    ) -> dict[str, Any]: ...
+    """The Shopify Admin GraphQL access the cart engine needs."""
+
+    async def query(self, query: str, variables: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Run a GraphQL query and return its `data`."""
 
 
 class CartError(Exception):
@@ -58,6 +59,8 @@ class CartError(Exception):
 
 @dataclass(frozen=True)
 class LineInput:
+    """A requested cart line: variant and quantity."""
+
     variant_id: str
     quantity: int
     # The id the agent used (product feed id, numeric id or GID), echoed back in responses.
@@ -66,6 +69,8 @@ class LineInput:
 
 @dataclass(frozen=True)
 class BuyerInput:
+    """Buyer details used to prefill checkout."""
+
     email: str | None = None
     first_name: str | None = None
     last_name: str | None = None
@@ -74,6 +79,8 @@ class BuyerInput:
 
 @dataclass(frozen=True)
 class AddressInput:
+    """A shipping address used to quote shipping and tax and to prefill checkout."""
+
     address1: str
     city: str
     country_code: str
@@ -106,10 +113,12 @@ def variant_gid(ref: str | int) -> str:
 
 
 def line_id(variant: str) -> str:
+    """Derive a stable cart line id from a variant id."""
     return "li_" + variant.rsplit("/", 1)[-1]
 
 
 def money(value: Any) -> Decimal:
+    """Round an amount to cents."""
     return Decimal(str(value or "0")).quantize(CENT, rounding=ROUND_HALF_UP)
 
 
@@ -172,12 +181,16 @@ def _message(kind: str, code: str, content: str, path: str | None = None) -> dic
 
 
 class CartManager:
+    """Creates, updates and cancels agent carts for one shop, checking stock and pricing with
+    Shopify."""
+
     def __init__(self, carts: CartRepository, shopify: ShopifyQuery, shop_domain: str) -> None:
         self.carts = carts
         self.shopify = shopify
         self.shop_domain = shop_domain
 
     async def get(self, merchant_id: uuid.UUID, cart_id: uuid.UUID) -> AgentCart:
+        """Return a cart, expiring it first if its time-to-live has passed."""
         cart = await self.carts.get(merchant_id, cart_id)
         if cart is None:
             raise CartError("not_found", "checkout session not found")
@@ -200,6 +213,7 @@ class CartManager:
         agent_client_id: uuid.UUID | None = None,
         external_session_id: str | None = None,
     ) -> AgentCart:
+        """Create a cart from the requested lines, then check stock and price it."""
         if not changes.lines:
             raise CartError("invalid", "at least one line item is required", "lines")
         cart = AgentCart(
@@ -211,11 +225,13 @@ class CartManager:
         return await self._apply(cart, changes)
 
     async def update(self, cart: AgentCart, changes: CartChanges) -> AgentCart:
+        """Apply changes to an open or ready cart and re-price it."""
         if cart.status not in (CartStatus.OPEN, CartStatus.READY):
             raise CartError("not_modifiable", f"checkout session is {cart.status.value}")
         return await self._apply(cart, changes)
 
     async def cancel(self, cart: AgentCart) -> AgentCart:
+        """Cancel an open or ready cart."""
         if cart.status not in (CartStatus.OPEN, CartStatus.READY):
             raise CartError("not_modifiable", f"checkout session is {cart.status.value}")
         cart.status = CartStatus.CANCELED
@@ -518,6 +534,7 @@ def draft_order_input(
 
 
 def sellable_lines(cart: AgentCart) -> list[dict[str, Any]]:
+    """Return the cart lines that are available with a positive quantity."""
     return [li for li in cart.lines if li["available"] and li["quantity"] > 0]
 
 

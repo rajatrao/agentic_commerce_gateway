@@ -28,8 +28,6 @@ from app.services.cart_manager import (
     variant_gid,
 )
 
-API_VERSION = "2026-09-29"
-
 STATUS = {
     CartStatus.OPEN: "not_ready_for_payment",
     CartStatus.READY: "ready_for_payment",
@@ -48,11 +46,15 @@ class _Model(BaseModel):
 
 
 class AcpItem(_Model):
+    """A line in an ACP request: a product or variant id and a quantity."""
+
     id: str = Field(min_length=1, max_length=255)
     quantity: int = Field(ge=1, le=999)
 
 
 class AcpBuyer(_Model):
+    """Buyer details an ACP agent may send to prefill checkout."""
+
     name: str | None = Field(default=None, max_length=256)
     first_name: str | None = Field(default=None, max_length=256)
     last_name: str | None = Field(default=None, max_length=256)
@@ -61,6 +63,8 @@ class AcpBuyer(_Model):
 
 
 class AcpAddress(_Model):
+    """An ACP fulfillment address."""
+
     name: str | None = Field(default=None, max_length=256)
     line_one: str = Field(min_length=1, max_length=60)
     line_two: str | None = Field(default=None, max_length=60)
@@ -72,12 +76,16 @@ class AcpAddress(_Model):
 
 
 class CreateCheckoutSession(_Model):
+    """Body of an ACP create-checkout-session request."""
+
     items: list[AcpItem] = Field(min_length=1, max_length=100)
     buyer: AcpBuyer | None = None
     fulfillment_address: AcpAddress | None = None
 
 
 class UpdateCheckoutSession(_Model):
+    """Body of an ACP update-checkout-session request. Omitted fields keep their current values."""
+
     items: list[AcpItem] | None = Field(default=None, min_length=1, max_length=100)
     buyer: AcpBuyer | None = None
     fulfillment_address: AcpAddress | None = None
@@ -85,6 +93,8 @@ class UpdateCheckoutSession(_Model):
 
 
 class AcpAdapter(ProtocolAdapter):
+    """Translates ACP checkout sessions to `CartChanges` and renders carts as ACP sessions."""
+
     protocol: ClassVar[AgentProtocol] = AgentProtocol.ACP
     create_model: ClassVar[type[BaseModel]] = CreateCheckoutSession
     update_model: ClassVar[type[BaseModel]] = UpdateCheckoutSession
@@ -135,6 +145,7 @@ class AcpAdapter(ProtocolAdapter):
             raise ProtocolError(400, "invalid", exc.message, f"$.items[{index}].id") from exc
 
     def render(self, cart: AgentCart) -> dict[str, Any]:
+        """Render a cart as an ACP checkout session, with amounts in minor units."""
         cur = cart.currency
         lines = cart.lines
 
@@ -258,6 +269,7 @@ class AcpAdapter(ProtocolAdapter):
         return out
 
     def render_error(self, error: ProtocolError) -> dict[str, Any]:
+        """Render an error as an ACP error object."""
         kind = {
             409: "invalid_request",
             503: "service_unavailable",

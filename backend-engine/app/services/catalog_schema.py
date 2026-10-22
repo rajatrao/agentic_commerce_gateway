@@ -61,20 +61,22 @@ UNIT_FACTORS: dict[str, dict[str, Decimal]] = {
     "volume": {"ml": Decimal("0.001"), "l": Decimal(1)},
     "dimension": {"mm": Decimal("0.1"), "cm": Decimal(1), "m": Decimal(100), "in": Decimal("2.54")},
 }  # fmt: skip
-# Shopify's typed metafields spell some units differently.
-SHOPIFY_UNITS = {"weight": {"g": "g", "kg": "kg", "oz": "oz", "lb": "lb"}}
 
 NUMBER_RE = r"(\d+(?:[.,]\d+)?)"
 KEY_RE = r"^[a-z][a-z0-9_]{1,63}$"
 
 
 class MetafieldTarget(BaseModel):
+    """A Shopify metafield: namespace, key and type."""
+
     namespace: str = Field(pattern=r"^[a-zA-Z0-9_-]{2,255}$")
     key: str = Field(pattern=r"^[a-zA-Z0-9_-]{2,64}$")
     type: str = Field(min_length=3, max_length=64)
 
 
 class AttributeDefinition(BaseModel):
+    """One attribute a category schema expects: type, unit, importance, vocabulary and metafield."""
+
     key: str = Field(pattern=KEY_RE)
     label: str = Field(min_length=1, max_length=80)
     type: AttributeType
@@ -134,6 +136,8 @@ class AutoApproval(BaseModel):
 
 
 class CategorySchema(BaseModel):
+    """The attributes, variant options and shopper questions expected for a product category."""
+
     key: str = Field(pattern=KEY_RE)
     name: str = Field(min_length=1, max_length=80)
     # How products are assigned to this schema (case-insensitive substring matches).
@@ -160,6 +164,7 @@ class CategorySchema(BaseModel):
         return self
 
     def attribute(self, key: str) -> AttributeDefinition | None:
+        """Return the attribute with this key, or None."""
         return next((a for a in self.attributes if a.key == key), None)
 
 
@@ -480,6 +485,7 @@ FALLBACK_SCHEMA_KEY = "general"
 
 
 def builtin_schemas() -> dict[str, CategorySchema]:
+    """Return the built-in category schemas by key."""
     return {s["key"]: CategorySchema.model_validate(s) for s in BUILTIN_SCHEMAS}
 
 
@@ -556,10 +562,12 @@ def parse_measurement(raw: Any, kind: str) -> dict[str, Any]:
 
 
 def to_base(value: dict[str, Any], kind: str) -> Decimal:
+    """Convert a measurement (`{"value", "unit"}`) to its kind's base unit."""
     return Decimal(str(value["value"])) * UNIT_FACTORS[kind][value["unit"]]
 
 
 def convert(value: dict[str, Any], kind: str, unit: str) -> Decimal:
+    """Convert a measurement to `unit`."""
     return to_base(value, kind) / UNIT_FACTORS[kind][unit]
 
 
@@ -658,6 +666,7 @@ def values_equal(a: Any, b: Any, attr: AttributeDefinition) -> bool:
 
 
 def display_value(value: Any, attr: AttributeDefinition | None = None) -> str:
+    """Format an attribute value for display (Unknown, Yes/No, lists, measurements)."""
     if value is None:
         return "Unknown"
     if isinstance(value, dict) and "value" in value:

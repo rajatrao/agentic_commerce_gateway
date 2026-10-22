@@ -1,3 +1,5 @@
+"""Received Shopify webhooks."""
+
 from typing import Any
 
 from sqlalchemy import update
@@ -10,6 +12,8 @@ from app.models.base import utcnow
 
 
 class WebhookEventRepository:
+    """Records Shopify webhooks once per webhook id."""
+
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
@@ -34,6 +38,7 @@ class WebhookEventRepository:
         return inserted is not None
 
     async def mark_processed(self, webhook_id: str) -> None:
+        """Record that a webhook was handled."""
         await self.session.exec(
             update(WebhookEvent)
             .where(col(WebhookEvent.webhook_id) == webhook_id)

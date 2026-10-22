@@ -263,6 +263,7 @@ def _shopify_error(exc: Exception) -> HTTPException:
 
 @router.get("/overview", response_model=OverviewOut)
 async def overview(merchant: CurrentMerchant, session: SessionDep, request: Request) -> OverviewOut:
+    """Summarize catalog readiness: latest audit stats, finding counts, recent jobs and changes."""
     catalog = CatalogRepository(session)
     enrichment = EnrichmentRepository(session)
     run = await catalog.latest_completed_run(merchant.id)
@@ -323,6 +324,7 @@ async def list_products(
     limit: int = Query(50, ge=1, le=250),
     offset: int = Query(0, ge=0),
 ) -> CatalogProductPage:
+    """Page through audited products, filtered by schema, readiness, finding or search text."""
     catalog = CatalogRepository(session)
     run = await catalog.latest_completed_run(merchant.id)
     rows, total, counts = await catalog.products(
@@ -346,6 +348,7 @@ async def list_products(
 async def product_detail(
     product_id: str, merchant: CurrentMerchant, session: SessionDep
 ) -> ProductDetailOut:
+    """Return one product with its readiness breakdown, findings, suggestions and change history."""
     gid = _gid(product_id)
     catalog = CatalogRepository(session)
     product = await catalog.product(merchant.id, gid)
@@ -414,6 +417,7 @@ async def list_findings(
     limit: int = Query(50, ge=1, le=250),
     offset: int = Query(0, ge=0),
 ) -> FindingPage:
+    """Page through the current catalog findings, filtered by severity, code or detection method."""
     catalog = CatalogRepository(session)
     run = await catalog.latest_completed_run(merchant.id)
     rows, total = await catalog.findings(
@@ -444,6 +448,7 @@ async def start_enrichment(
     settings: SettingsDep,
     request: Request,
 ) -> JobOut:
+    """Queue an enrichment job for the given products, or for the least-ready ones."""
     catalog = CatalogRepository(session)
     limit = settings.enrichment_max_products
     if body.lowest_readiness:
@@ -473,6 +478,7 @@ async def start_enrichment(
 
 @router.get("/enrichment-jobs", response_model=list[JobOut])
 async def list_enrichment_jobs(merchant: CurrentMerchant, session: SessionDep) -> list[JobOut]:
+    """List the merchant's recent enrichment jobs."""
     return [_job(j) for j in await EnrichmentRepository(session).list_jobs(merchant.id)]
 
 
@@ -480,6 +486,7 @@ async def list_enrichment_jobs(merchant: CurrentMerchant, session: SessionDep) -
 async def get_enrichment_job(
     job_id: uuid.UUID, merchant: CurrentMerchant, session: SessionDep
 ) -> JobOut:
+    """Return one enrichment job with its per-product results."""
     job = await EnrichmentRepository(session).get_job(merchant.id, job_id)
     if job is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "job not found")
@@ -528,6 +535,8 @@ async def list_suggestions(
     limit: int = Query(50, ge=1, le=250),
     offset: int = Query(0, ge=0),
 ) -> SuggestionPage:
+    """Page through attribute suggestions in the review queue, filtered by status, product,
+    attribute or validation."""
     try:
         statuses = [SuggestionStatus(s) for s in status_.split(",") if s]
     except ValueError as exc:
@@ -549,6 +558,7 @@ async def list_suggestions(
 async def review_suggestions(
     body: ReviewRequest, merchant: CurrentMerchant, session: SessionDep
 ) -> dict[str, Any]:
+    """Approve, edit or reject suggestions in bulk."""
     config = await CatalogConfigRepository(session).load(merchant)
     results = await catalog_publisher.review(
         session,
@@ -644,6 +654,7 @@ async def publish(
 async def list_publish_jobs(
     merchant: CurrentMerchant, session: SessionDep, limit: int = Query(20, ge=1, le=100)
 ) -> list[CatalogJobOut]:
+    """List recent jobs that wrote approved values to Shopify."""
     rows = await CatalogJobRepository(session).recent(merchant.id, CatalogJobKind.PUBLISH, limit)
     return [_catalog_job(j) for j in rows]
 
@@ -652,6 +663,7 @@ async def list_publish_jobs(
 async def get_publish_job(
     job_id: uuid.UUID, merchant: CurrentMerchant, session: SessionDep
 ) -> CatalogJobOut:
+    """Return one publish job."""
     job = await CatalogJobRepository(session).get(merchant.id, job_id)
     if job is None or job.kind is not CatalogJobKind.PUBLISH:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "job not found")
@@ -687,6 +699,7 @@ async def start_discovery_run(
 async def list_discovery_runs(
     merchant: CurrentMerchant, session: SessionDep, limit: int = Query(10, ge=1, le=50)
 ) -> list[CatalogJobOut]:
+    """List recent agent-discovery test runs."""
     rows = await CatalogJobRepository(session).recent(merchant.id, CatalogJobKind.DISCOVERY, limit)
     return [_catalog_job(j) for j in rows]
 
@@ -695,6 +708,7 @@ async def list_discovery_runs(
 async def get_discovery_run(
     job_id: uuid.UUID, merchant: CurrentMerchant, session: SessionDep
 ) -> CatalogJobOut:
+    """Return one agent-discovery test run."""
     job = await CatalogJobRepository(session).get(merchant.id, job_id)
     if job is None or job.kind is not CatalogJobKind.DISCOVERY:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "run not found")
@@ -710,6 +724,7 @@ async def list_changes(
     limit: int = Query(50, ge=1, le=250),
     offset: int = Query(0, ge=0),
 ) -> ChangePage:
+    """Page through the catalog change log, optionally only writes to Shopify."""
     rows, total = await CatalogRepository(session).changes(
         merchant.id,
         product_gid=_gid(product) if product else None,
@@ -730,6 +745,7 @@ async def revert_change(
     tokens: TokenProviderDep,
     request: Request,
 ) -> ChangeOut:
+    """Restore a published value in Shopify to what it was before the change."""
     try:
         row = await catalog_publisher.revert(
             session, merchant, _writer(merchant, http, tokens, settings), change_id
@@ -750,6 +766,7 @@ async def revert_change(
 
 @router.get("/schemas", response_model=list[SchemaOut])
 async def list_schemas(merchant: CurrentMerchant, session: SessionDep) -> list[SchemaOut]:
+    """List the category schemas in effect for the merchant, marking built-in and custom ones."""
     repo = CatalogConfigRepository(session)
     customized = {o.key for o in await repo.overrides(merchant.id)}
     return [
@@ -762,6 +779,7 @@ async def list_schemas(merchant: CurrentMerchant, session: SessionDep) -> list[S
 async def put_schema(
     key: str, body: CategorySchema, merchant: CurrentMerchant, session: SessionDep
 ) -> SchemaOut:
+    """Save a merchant's custom version of a category schema."""
     if body.key != key:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "key does not match the URL")
     await CatalogConfigRepository(session).save_schema(merchant.id, body)
@@ -863,6 +881,8 @@ async def list_mappings(
     tokens: TokenProviderDep,
     check_shopify: bool = False,
 ) -> list[MappingOut]:
+    """List how each schema attribute maps to a Shopify metafield, optionally checked against the
+    store's definitions."""
     config = await CatalogConfigRepository(session).load(merchant)
     definitions: dict[tuple[str, str], str] | None = None
     if check_shopify:
@@ -900,6 +920,7 @@ async def list_mappings(
 async def put_mapping(
     attribute_key: str, body: MappingIn, merchant: CurrentMerchant, session: SessionDep
 ) -> MappingOut:
+    """Set the metafield an attribute is written to, checking its type is compatible."""
     repo = CatalogConfigRepository(session)
     config = await repo.load(merchant)
     index = _attribute_index(config)
@@ -961,6 +982,7 @@ def _settings_out(merchant: Merchant, request: Request) -> CatalogSettingsOut:
 
 @router.get("/settings", response_model=CatalogSettingsOut)
 async def get_catalog_settings(merchant: CurrentMerchant, request: Request) -> CatalogSettingsOut:
+    """Return the merchant's catalog settings: readiness weights, AI and auto-publish options."""
     return _settings_out(merchant, request)
 
 
@@ -968,6 +990,7 @@ async def get_catalog_settings(merchant: CurrentMerchant, request: Request) -> C
 async def put_catalog_settings(
     body: CatalogSettingsIn, merchant: CurrentMerchant, session: SessionDep, request: Request
 ) -> CatalogSettingsOut:
+    """Update the merchant's catalog settings after validating the readiness weights."""
     unknown = set(body.readiness_weights) - set(DEFAULT_WEIGHTS)
     if unknown:
         raise HTTPException(

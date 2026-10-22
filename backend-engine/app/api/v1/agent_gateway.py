@@ -43,6 +43,8 @@ async def llm_txt(
     tokens: TokenProviderDep,
     shop: str = Query(..., description="The store's myshopify.com domain"),
 ) -> StreamingResponse | PlainTextResponse:
+    """Stream an installed store's catalog as `llm.txt` Markdown for LLM ingestion, served from
+    cache when fresh."""
     shop = shop.strip().lower()
     if not SHOP_RE.fullmatch(shop):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "shop must be a myshopify.com domain")

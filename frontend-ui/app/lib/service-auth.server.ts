@@ -6,6 +6,7 @@ import { importSPKI, jwtVerify, type CryptoKey, type KeyObject } from "jose";
  * frontend-ui only the public key (BACKEND_JWT_PUBLIC_KEY).
  */
 
+/** A rejected service JWT, with the HTTP status to answer with. */
 export class ServiceAuthError extends Error {
   constructor(
     message: string,
@@ -16,6 +17,7 @@ export class ServiceAuthError extends Error {
   }
 }
 
+/** The verified shop and scopes of a backend-engine service JWT. */
 export interface BackendClaims {
   shop: string;
   scopes: string[];
@@ -33,6 +35,7 @@ export interface JtiStore {
 /** Expired rows are swept on roughly one in this many claims. */
 const PURGE_ONE_IN = 100;
 
+/** Postgres-backed `JtiStore`, shared by all replicas. */
 export const prismaJtiStore: JtiStore = {
   async claim(jti, expiresAt) {
     // Imported lazily so modules (and tests) that never verify a token don't need a client.
@@ -86,6 +89,10 @@ export function resetServiceAuthCache(store: JtiStore = memoryJtiStore()) {
   jtiStore = store;
 }
 
+/**
+ * Verifies a request's backend-engine service JWT (signature, claims, replay)
+ * and checks it grants `requiredScope`. Throws `ServiceAuthError` otherwise.
+ */
 export async function verifyBackendRequest(
   request: Request,
   requiredScope: string,

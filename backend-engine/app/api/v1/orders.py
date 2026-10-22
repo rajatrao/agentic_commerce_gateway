@@ -22,6 +22,7 @@ async def list_agent_checkouts(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ) -> AgentCheckoutPage:
+    """Page through carts built by agents, with the agent's name and any linked Shopify order."""
     carts = CartRepository(session)
     total, rows = await carts.list_for(merchant.id, limit=limit, offset=offset)
     admin = f"https://admin.shopify.com/store/{merchant.shop_domain.removesuffix('.myshopify.com')}"

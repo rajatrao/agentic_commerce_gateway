@@ -24,6 +24,7 @@ log = structlog.get_logger(__name__)
 
 
 def agentic_cart_id(order: dict[str, Any]) -> uuid.UUID | None:
+    """Return the agent cart id from an order's `_agentic_cart_id` note attribute, if present."""
     for attr in order.get("note_attributes") or []:
         if isinstance(attr, dict) and attr.get("name") == CART_ATTRIBUTE:
             try:
@@ -34,6 +35,7 @@ def agentic_cart_id(order: dict[str, Any]) -> uuid.UUID | None:
 
 
 def order_gid(order: dict[str, Any]) -> str | None:
+    """Return the order's Admin GraphQL id."""
     if gid := order.get("admin_graphql_api_id"):
         return str(gid)
     return f"gid://shopify/Order/{order['id']}" if order.get("id") else None

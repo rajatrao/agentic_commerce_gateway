@@ -1,3 +1,5 @@
+"""Request and response models for merchant sync and installation checks."""
+
 import uuid
 from datetime import datetime
 from typing import Any
@@ -6,12 +8,16 @@ from pydantic import BaseModel, Field
 
 
 class MerchantSyncRequest(BaseModel):
+    """frontend-ui's request to record a shop's install and offline access token."""
+
     shop: str = Field(pattern=r"^[a-z0-9][a-z0-9\-]*\.myshopify\.com$")
     access_token: str = Field(min_length=10)
     scopes: str = ""
 
 
 class MerchantOut(BaseModel):
+    """A merchant's install record."""
+
     id: uuid.UUID
     shop_domain: str
     status: str
@@ -19,6 +25,8 @@ class MerchantOut(BaseModel):
 
 
 class InstallationCheckRequest(BaseModel):
+    """Which storefront and product page to check."""
+
     store_url: str | None = Field(
         default=None, description="Defaults to the shop's myshopify.com domain."
     )
@@ -26,6 +34,8 @@ class InstallationCheckRequest(BaseModel):
 
 
 class InstallationCheckOut(BaseModel):
+    """The result of an installation check."""
+
     id: uuid.UUID
     store_url: str
     passed: bool

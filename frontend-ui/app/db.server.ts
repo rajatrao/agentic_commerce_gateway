@@ -13,4 +13,5 @@ if (process.env.NODE_ENV !== "production") {
 
 const prisma = global.prismaGlobal ?? new PrismaClient();
 
+/** Shared Prisma client, reused across hot reloads in development. */
 export default prisma;

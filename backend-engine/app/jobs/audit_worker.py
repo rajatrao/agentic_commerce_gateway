@@ -31,14 +31,19 @@ PERMANENT_ERRORS = (PermanentAuditError, ShopifyAuthError)
 class JobQueue(Protocol):
     """The repository operations a `QueueWorker` needs (audit runs, enrichment jobs)."""
 
-    async def claim_next(
-        self, *, stale_after: timedelta, max_attempts: int
-    ) -> ClaimedRun | None: ...
-    async def heartbeat(self, claim: ClaimedRun) -> bool: ...
-    async def release(self, claim: ClaimedRun) -> None: ...
+    async def claim_next(self, *, stale_after: timedelta, max_attempts: int) -> ClaimedRun | None:
+        """Claim the oldest due job, or a running one whose worker stopped heartbeating."""
+
+    async def heartbeat(self, claim: ClaimedRun) -> bool:
+        """Record that the claim is still being worked on. Returns False if it was lost."""
+
+    async def release(self, claim: ClaimedRun) -> None:
+        """Give the claim back without counting an attempt."""
+
     async def retry_or_fail(
         self, claim: ClaimedRun, error: str, *, retry_in: timedelta | None
-    ) -> Any: ...
+    ) -> Any:
+        """Record a failed attempt and schedule a retry, or mark the job failed."""
 
 
 class QueueWorker:
@@ -61,15 +66,19 @@ class QueueWorker:
         self._task: asyncio.Task[None] | None = None
 
     def queue(self, session: AsyncSession) -> JobQueue:
+        """Return the repository for this worker's queue. Subclasses override this."""
         raise NotImplementedError
 
     async def execute(self, session: AsyncSession, claim: ClaimedRun) -> Any:
+        """Run one claimed job. Subclasses override this."""
         raise NotImplementedError
 
     def start(self) -> None:
+        """Start the polling loop as a background task."""
         self._task = asyncio.create_task(self._loop(), name=f"{self.name}-worker")
 
     async def stop(self) -> None:
+        """Cancel the polling loop and wait for it to finish."""
         if self._task is not None:
             self._task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -131,6 +140,7 @@ class QueueWorker:
                 await heartbeat
 
     def completed(self, claim: ClaimedRun, result: Any) -> None:
+        """Log a finished job. Subclasses may log more detail."""
         log.info(f"{self.name}.completed", run_id=str(claim.id))
 
     async def _failed(self, queue: JobQueue, claim: ClaimedRun, exc: Exception) -> None:
@@ -168,15 +178,20 @@ class QueueWorker:
 
 
 class AuditWorker(QueueWorker):
+    """Runs queued catalog audits."""
+
     name = "audit"
 
     def queue(self, session: AsyncSession) -> JobQueue:
+        """Return the audit run queue."""
         return AuditRepository(session)
 
     async def execute(self, session: AsyncSession, claim: ClaimedRun) -> Any:
+        """Run one catalog audit."""
         return await run_catalog_audit(session, claim, self.http, self.tokens, self.settings)
 
     def completed(self, claim: ClaimedRun, result: Any) -> None:
+        """Log a finished audit with its product count and average score."""
         log.info(
             "audit.completed",
             run_id=str(claim.id),

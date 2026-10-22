@@ -56,6 +56,8 @@ QUOTE_SPLIT_RE = re.compile(r"\s*(?:…|\.\.\.)\s*")
 
 @dataclass
 class SuggestionDraft:
+    """A validated attribute suggestion ready to be stored for review."""
+
     attribute_key: str
     data_type: str
     current_value: Any
@@ -72,6 +74,8 @@ class SuggestionDraft:
 
 @dataclass
 class EnrichmentResult:
+    """A product's suggestions and findings, plus its current attribute values."""
+
     schema_key: str
     suggestions: list[SuggestionDraft]
     findings: list[Finding]
@@ -79,6 +83,7 @@ class EnrichmentResult:
 
 
 def normalize(text: str) -> str:
+    """Normalize text for evidence matching: NFKC, lowercase, plain quotes, single spaces."""
     text = unicodedata.normalize("NFKC", text).lower()
     text = text.translate(str.maketrans(QUOTE_CHARS))
     return re.sub(r"\s+", " ", text).strip()
@@ -90,6 +95,7 @@ def _haystack(sources: list[TextSource], metafields: list[dict[str, Any]]) -> st
 
 
 def evidence_found(evidence: str, haystack: str) -> bool:
+    """Whether every part of a quote (split on ellipses) appears in the normalized text."""
     parts = [normalize(p) for p in QUOTE_SPLIT_RE.split(evidence) if p.strip()]
     return bool(parts) and all(p.strip(" .,;:") in haystack for p in parts)
 
@@ -153,6 +159,8 @@ def build_suggestions(
     ai_model: str | None = None,
     ai_error: str | None = None,
 ) -> EnrichmentResult:
+    """Build validated suggestions and findings for a product from rule extraction and, if given,
+    the AI result."""
     schema = match_schema(product, schemas)
     sources = text_sources(product)
     metafields = _metafields(product)

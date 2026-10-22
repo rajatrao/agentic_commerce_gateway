@@ -3,6 +3,9 @@ import { authenticate } from "../shopify.server";
 import db from "../db.server";
 import { forwardWebhookToBackend } from "../lib/webhooks.server";
 
+/**
+ * Deletes the shop's sessions and tells backend-engine the app was uninstalled.
+ */
 export const action = async ({ request }: ActionFunctionArgs) => {
   const rawBody = await request.clone().text();
   const { shop, session, topic } = await authenticate.webhook(request);

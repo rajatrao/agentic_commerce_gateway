@@ -24,6 +24,7 @@ const PROTOCOLS: Record<AgentProtocol, { label: string; endpoint: string }> = {
   mcp: { label: "MCP (Model Context Protocol)", endpoint: "/mcp" },
 };
 
+/** Loads the store's agent API keys. */
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   return {
@@ -33,6 +34,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   };
 };
 
+/** Creates an agent API key (returned once) or revokes one. */
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const form = await request.formData();
@@ -70,6 +72,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 };
 
+/** Agent access page: create and revoke the API keys AI agents use. */
 export default function Agents() {
   const { clients, baseUrl } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
@@ -214,6 +217,7 @@ function AgentClientTable({
   );
 }
 
+/** Adds the headers Shopify's embedded app boundary needs. */
 export const headers: HeadersFunction = (headersArgs) => {
   return boundary.headers(headersArgs);
 };

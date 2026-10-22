@@ -5,12 +5,14 @@ import { Form, useActionData, useLoaderData } from "react-router";
 import { login } from "../../shopify.server";
 import { loginErrorMessage } from "./error.server";
 
+/** Starts a Shopify login and returns any shop-domain errors. */
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const errors = loginErrorMessage(await login(request));
 
   return { errors };
 };
 
+/** Handles the login form and returns any shop-domain errors. */
 export const action = async ({ request }: ActionFunctionArgs) => {
   const errors = loginErrorMessage(await login(request));
 
@@ -19,6 +21,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   };
 };
 
+/** Login page for entering a shop domain. */
 export default function Auth() {
   const loaderData = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();

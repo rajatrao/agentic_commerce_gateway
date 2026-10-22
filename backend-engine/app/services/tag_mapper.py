@@ -11,11 +11,12 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-SOURCE_TYPES = ("tag", "metafield", "product_type", "vendor")
-
 
 @dataclass(frozen=True)
 class MappingRule:
+    """A meta-mapping rule: when a product's source value matches the pattern, set
+    `target_property`."""
+
     source_type: str
     match_pattern: str
     target_property: str
@@ -24,6 +25,7 @@ class MappingRule:
     priority: int = 100
 
     def compiled(self) -> re.Pattern[str]:
+        """Return the rule's pattern compiled case-insensitively."""
         return re.compile(self.match_pattern, re.IGNORECASE)
 
 

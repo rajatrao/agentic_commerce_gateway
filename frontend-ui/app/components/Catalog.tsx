@@ -5,6 +5,7 @@ import type {
   Suggestion,
 } from "../lib/types";
 
+/** Finding severities, most severe first. */
 export const SEVERITIES: FindingSeverity[] = [
   "critical",
   "high",
@@ -22,6 +23,7 @@ const SEVERITY_TONES: Record<
   low: "neutral",
 };
 
+/** Polaris badge tone for a finding severity. */
 export function severityTone(severity: FindingSeverity) {
   return SEVERITY_TONES[severity];
 }
@@ -50,6 +52,7 @@ export const COMPONENT_LABELS: Record<string, string> = {
   foundation: "Core product data (AI Discovery Score)",
 };
 
+/** Human-readable label for a finding code, falling back to the code itself. */
 export function findingLabel(code: string) {
   if (FINDING_LABELS[code]) return FINDING_LABELS[code];
   const text = code.replace(/^ai_/, "").replace(/_/g, " ");
@@ -61,10 +64,12 @@ export function productId(gid: string) {
   return gid.split("/").pop() ?? gid;
 }
 
+/** Formats an ISO timestamp in the browser's locale, or an empty string. */
 export function formatDate(value: string | null | undefined) {
   return value ? new Date(value).toLocaleString() : "";
 }
 
+/** Polaris badge tone for a readiness score relative to the ready threshold. */
 export function readinessTone(
   score: number | null,
   threshold = 80,
@@ -76,6 +81,7 @@ export function readinessTone(
   return "critical";
 }
 
+/** Badge showing a readiness score, or "Not scored". */
 export function ReadinessBadge({
   score,
   threshold,
@@ -90,6 +96,7 @@ export function ReadinessBadge({
   );
 }
 
+/** Inline badges with the number of findings per severity. */
 export function SeverityCounts({
   counts,
 }: {
@@ -134,6 +141,7 @@ const VALIDATION_TONES = {
   unknown: "neutral",
 } as const;
 
+/** Badge showing whether a suggestion's value passed validation. */
 export function ValidationBadge({ suggestion }: { suggestion: Suggestion }) {
   const label =
     suggestion.validation_status === "unknown"
@@ -159,6 +167,7 @@ const STATUS_TONES: Record<
   reverted: "warning",
 };
 
+/** Badge showing a suggestion's review status. */
 export function SuggestionStatusBadge({
   status,
 }: {
@@ -167,12 +176,17 @@ export function SuggestionStatusBadge({
   return <s-badge tone={STATUS_TONES[status]}>{status}</s-badge>;
 }
 
+/** A confidence value (0-1) shown as a percentage. */
 export function Confidence({ value }: { value: string | null }) {
   if (value === null) return <s-text color="subdued">-</s-text>;
   const pct = Math.round(Number(value) * 100);
   return <s-text>{`${pct}%`}</s-text>;
 }
 
+/**
+ * Table of catalog findings with why each matters and what to do, optionally
+ * with product links.
+ */
 export function FindingTable({
   findings,
   showProduct = false,
@@ -244,6 +258,10 @@ const ACTION_LABELS: Record<CatalogChange["action"], string> = {
   revert: "Reverted",
 };
 
+/**
+ * Table of catalog changes (before and after values), optionally with product
+ * links.
+ */
 export function ChangeTable({
   changes,
   onRevert,

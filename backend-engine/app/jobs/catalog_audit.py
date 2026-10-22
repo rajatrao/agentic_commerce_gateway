@@ -33,6 +33,7 @@ def shopify_client_for(
     tokens: ShopifyTokenProvider,
     settings: Settings,
 ) -> ShopifyAdminClient:
+    """Build a Shopify Admin API client for the merchant, using its stored offline token."""
     shop, token_enc = merchant.shop_domain, merchant.access_token_enc
 
     async def token_getter() -> str:
@@ -73,6 +74,8 @@ async def run_catalog_audit(
 
 
 def snapshot(product: dict[str, Any]) -> dict[str, Any]:
+    """Extract the product fields the app keeps locally (handle, status, type, vendor, category,
+    variant count, last update)."""
     variants = product.get("variants") or {}
     nodes = variants if isinstance(variants, list) else variants.get("nodes") or []
     updated = product.get("updatedAt")
@@ -101,6 +104,7 @@ class RunStats:
         self.ready = 0
 
     def assess(self, product: dict[str, Any], scored: ProductScore) -> None:
+        """Assess one product's readiness and add it to the run's schema and discovery counts."""
         readiness = assess_product(
             product,
             scored,
@@ -119,6 +123,7 @@ class RunStats:
                 self.query_hits[(schema.key, i)] += 1
 
     def as_json(self) -> dict[str, Any]:
+        """Return the run-level stats stored on the audit run, including discovery test coverage."""
         tests = []
         for key, count in self.schema_counts.items():
             schema = self.config.schemas[key]

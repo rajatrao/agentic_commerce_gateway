@@ -1,3 +1,5 @@
+"""Request and response models for agent API keys and the agent checkouts view."""
+
 import uuid
 from datetime import datetime
 from decimal import Decimal
@@ -13,12 +15,16 @@ def _all_scopes() -> list[AgentScope]:
 
 
 class AgentClientIn(BaseModel):
+    """Request to issue an agent API key for one protocol and a set of scopes."""
+
     name: str = Field(min_length=1, max_length=80)
     protocol: Literal["ucp", "acp", "mcp"]
     scopes: list[AgentScope] = Field(default_factory=_all_scopes, min_length=1)
 
 
 class AgentClientOut(BaseModel):
+    """An agent API key as listed to the merchant, identified by its prefix."""
+
     id: uuid.UUID
     name: str
     protocol: str
@@ -29,6 +35,8 @@ class AgentClientOut(BaseModel):
 
 
 class AgentClientCreated(AgentClientOut):
+    """A newly issued agent API key, including the plaintext key."""
+
     api_key: str
     """Shown once. Only an argon2 hash is stored."""
 
@@ -53,6 +61,8 @@ class AgentCheckoutOut(BaseModel):
 
 
 class AgentCheckoutPage(BaseModel):
+    """A page of agent carts plus how many of them became Shopify orders."""
+
     total: int
     # How many of this store's agent carts became Shopify orders.
     ordered: int

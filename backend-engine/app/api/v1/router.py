@@ -1,3 +1,5 @@
+"""Assembles every v1 router into the API router mounted by `create_app`."""
+
 from fastapi import APIRouter
 
 from app.api.v1 import (

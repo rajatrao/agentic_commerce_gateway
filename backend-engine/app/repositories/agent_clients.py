@@ -1,3 +1,5 @@
+"""Agent API keys and the idempotency records of agent requests."""
+
 import hashlib
 import json
 import uuid
@@ -20,15 +22,20 @@ IDEMPOTENCY_TTL = timedelta(hours=24)
 
 @dataclass(frozen=True)
 class AgentPrincipal:
+    """An authenticated agent: its API key record and the merchant it belongs to."""
+
     client: AgentClient
     merchant: Merchant
 
 
 class AgentClientRepository:
+    """Stores and authenticates agent API keys."""
+
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
     async def list_for(self, merchant_id: uuid.UUID) -> Sequence[AgentClient]:
+        """List a merchant's agent keys, newest first, revoked ones included."""
         return (
             await self.session.exec(
                 select(AgentClient)
@@ -38,6 +45,7 @@ class AgentClientRepository:
         ).all()
 
     async def count_active(self, merchant_id: uuid.UUID) -> int:
+        """Count a merchant's keys that are not revoked."""
         return len([c for c in await self.list_for(merchant_id) if c.revoked_at is None])
 
     async def create(
@@ -48,6 +56,7 @@ class AgentClientRepository:
         scopes: list[str],
         key: IssuedKey,
     ) -> AgentClient:
+        """Store a new agent key's prefix and hash."""
         client = AgentClient(
             merchant_id=merchant_id,
             name=name,
@@ -62,6 +71,7 @@ class AgentClientRepository:
         return client
 
     async def revoke(self, merchant_id: uuid.UUID, client_id: uuid.UUID) -> AgentClient | None:
+        """Revoke one of a merchant's keys. Returns None if the key is not the merchant's."""
         client = await self.session.get(AgentClient, client_id)
         if client is None or client.merchant_id != merchant_id:
             return None
@@ -99,17 +109,22 @@ class AgentClientRepository:
 
 
 def request_fingerprint(method: str, path: str, body: Any) -> str:
+    """Hash a request's method, path and canonical JSON body to detect Idempotency-Key reuse."""
     canonical = json.dumps(body, sort_keys=True, separators=(",", ":"), default=str)
     return hashlib.sha256(f"{method} {path}\n{canonical}".encode()).hexdigest()
 
 
 class IdempotencyConflict(Exception):
+    """An Idempotency-Key was reused for another request, or its first request is still running."""
+
     def __init__(self, reason: str) -> None:
         super().__init__(reason)
         self.reason = reason  # "mismatch" or "in_progress"
 
 
 class IdempotencyRepository:
+    """Stores the outcome of each agent request per Idempotency-Key so retries replay it."""
+
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
@@ -147,6 +162,7 @@ class IdempotencyRepository:
     async def finish(
         self, client_id: uuid.UUID, key: str, status: int, body: dict[str, Any]
     ) -> None:
+        """Store the response for a key so later retries replay it."""
         record = await self._get(client_id, key)
         if record is not None:
             record.status_code = status

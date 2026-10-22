@@ -1,3 +1,5 @@
+"""Request and response models for catalog audits, meta-mapping rules and FAQs."""
+
 import uuid
 from datetime import datetime
 from decimal import Decimal
@@ -7,6 +9,8 @@ from pydantic import BaseModel, Field
 
 
 class AuditRunOut(BaseModel):
+    """Status and headline numbers of one audit run."""
+
     id: uuid.UUID
     status: str
     started_at: datetime
@@ -16,12 +20,16 @@ class AuditRunOut(BaseModel):
 
 
 class IssueCount(BaseModel):
+    """How many products share one audit issue."""
+
     code: str
     count: int
     message: str
 
 
 class AuditSummaryOut(BaseModel):
+    """The latest audit run plus the AI Discovery Score summary of the latest completed one."""
+
     run: AuditRunOut | None
     """Most recent run, which may still be running."""
     completed_run: AuditRunOut | None
@@ -33,6 +41,8 @@ class AuditSummaryOut(BaseModel):
 
 
 class ProductAuditOut(BaseModel):
+    """One product's AI Discovery Score and what it is missing."""
+
     product_gid: str
     title: str
     score: int
@@ -43,12 +53,17 @@ class ProductAuditOut(BaseModel):
 
 
 class ProductAuditPage(BaseModel):
+    """A page of product scores from one audit run."""
+
     run_id: uuid.UUID
     total: int
     items: list[ProductAuditOut]
 
 
 class MappingRuleIn(BaseModel):
+    """A meta-mapping rule: a regex on a tag, metafield, product type or vendor that sets a product
+    property."""
+
     source_type: Literal["tag", "metafield", "product_type", "vendor"]
     source_key: str = Field(default="", description="namespace.key for metafields")
     match_pattern: str = Field(min_length=1, max_length=500)
@@ -59,14 +74,20 @@ class MappingRuleIn(BaseModel):
 
 
 class MappingRuleOut(MappingRuleIn):
+    """A stored meta-mapping rule."""
+
     id: uuid.UUID
 
 
 class MappingRulePatch(BaseModel):
+    """Turn a meta-mapping rule on or off."""
+
     active: bool
 
 
 class MappingMatch(BaseModel):
+    """One product a meta-mapping rule matched in a preview, with the value it would set."""
+
     product_gid: str
     title: str
     source_value: str
@@ -76,6 +97,8 @@ class MappingMatch(BaseModel):
 
 
 class MappingPreviewOut(BaseModel):
+    """What a meta-mapping rule would do against the current catalog."""
+
     products_scanned: int
     matched: int
     matches: list[MappingMatch]
@@ -84,9 +107,13 @@ class MappingPreviewOut(BaseModel):
 
 
 class Faq(BaseModel):
+    """A store FAQ published in `llm.txt`."""
+
     question: str = Field(min_length=3, max_length=500)
     answer: str = Field(min_length=1, max_length=4000)
 
 
 class FaqList(BaseModel):
+    """The store's FAQs."""
+
     faqs: list[Faq] = Field(max_length=100)

@@ -32,6 +32,8 @@ from app.models.base import pg_enum, tz_column, utcnow
 
 
 class Severity(StrEnum):
+    """How much a catalog finding hurts discoverability, from critical to low."""
+
     CRITICAL = "critical"
     HIGH = "high"
     MEDIUM = "medium"
@@ -39,6 +41,8 @@ class Severity(StrEnum):
 
 
 class SuggestionStatus(StrEnum):
+    """Review state of an attribute suggestion."""
+
     PENDING = "pending"
     APPROVED = "approved"
     REJECTED = "rejected"
@@ -183,6 +187,8 @@ class EnrichmentJob(SQLModel, table=True):
 
 
 class CatalogJobKind(StrEnum):
+    """The kinds of background catalog job."""
+
     PUBLISH = "publish"  # write approved suggestions to Shopify
     REFRESH = "refresh"  # re-read and re-score one product
     DISCOVERY = "discovery"  # run the schemas' shopper questions against storefront search

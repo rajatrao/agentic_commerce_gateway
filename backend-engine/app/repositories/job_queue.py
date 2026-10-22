@@ -94,14 +94,18 @@ class QueueRepository:
         return bool(result.rowcount)  # type: ignore[attr-defined]
 
     async def heartbeat(self, claim: ClaimedRun) -> bool:
+        """Record that the claimed job is still being worked on. Returns False if the claim was
+        lost."""
         return await self._fenced(claim, heartbeat_at=utcnow())
 
     async def job_state(self, claim: ClaimedRun) -> Any:
+        """Reload the claimed job's row from the database."""
         job = await self.session.get(self.model, claim.id, populate_existing=True)
         assert job is not None
         return job
 
     async def finish(self, claim: ClaimedRun, **values: Any) -> None:
+        """Mark the claimed job completed, raising `LostClaim` if another worker took it over."""
         done = await self._fenced(
             claim, status=RunStatus.COMPLETED, finished_at=utcnow(), last_error=None, **values
         )

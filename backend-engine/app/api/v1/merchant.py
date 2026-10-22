@@ -37,6 +37,8 @@ async def run_installation_check(
     session: SessionDep,
     http_client: HttpClientDep,
 ) -> InstallationCheckOut:
+    """Check the storefront for structured data, the app block, crawler access and `llms.txt`, and
+    store the report."""
     checker = InstallationChecker(http_client)
     try:
         report = await checker.check(body.store_url or merchant.shop_domain, body.product_url)
@@ -50,6 +52,7 @@ async def run_installation_check(
 async def latest_installation_check(
     merchant: CurrentMerchant, session: SessionDep
 ) -> InstallationCheckOut:
+    """Return the merchant's most recent installation check."""
     row = await InstallationCheckRepository(session).latest(merchant.id)
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "no installation check yet")
@@ -58,4 +61,5 @@ async def latest_installation_check(
 
 @router.get("/me")
 async def me(merchant: CurrentMerchant) -> dict[str, str]:
+    """Return the calling merchant's shop domain and install status."""
     return {"shop": merchant.shop_domain, "status": merchant.status.value}

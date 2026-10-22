@@ -91,6 +91,9 @@ query AgentProduct($id: ID!) {
 
 @dataclass
 class ToolScope:
+    """What an MCP tool call may act on: the agent's merchant, scopes, Shopify client and cart
+    manager."""
+
     merchant_id: uuid.UUID
     agent_client_id: uuid.UUID
     scopes: frozenset[str]
@@ -98,6 +101,7 @@ class ToolScope:
     carts: CartManager
 
     def require(self, scope: str) -> None:
+        """Raise a `ToolError` unless the agent key holds `scope`."""
         if scope not in self.scopes:
             raise ToolError(f"this API key lacks the {scope!r} scope")
 
@@ -107,11 +111,15 @@ ToolScopeFactory = Callable[[Context], AbstractAsyncContextManager[ToolScope]]
 
 
 class CartLine(BaseModel):
+    """A line an MCP agent adds to a cart."""
+
     variant_id: str = Field(description="Variant id from search_products (numeric or GID)")
     quantity: int = Field(ge=1, le=999)
 
 
 class ShippingAddress(BaseModel):
+    """A shipping address an MCP agent sends to price shipping and prefill checkout."""
+
     first_name: str | None = None
     last_name: str | None = None
     address1: str = Field(min_length=1)
@@ -127,6 +135,7 @@ Email = Annotated[str, Field(pattern=EMAIL_PATTERN, max_length=256)]
 
 
 def render_cart(cart: AgentCart) -> dict[str, Any]:
+    """Render a cart as the MCP tools' JSON result."""
     return {
         "cart_id": str(cart.id),
         "status": cart.status.value,
@@ -167,6 +176,7 @@ def render_cart(cart: AgentCart) -> dict[str, Any]:
 
 
 def render_product(node: dict[str, Any]) -> dict[str, Any]:
+    """Render a Shopify product node as the MCP tools' product result."""
     price = node.get("priceRangeV2") or {}
     low = (price.get("minVariantPrice") or {}).get("amount")
     high = (price.get("maxVariantPrice") or {}).get("amount")
@@ -238,6 +248,7 @@ class _ToolErrors:
 
 
 def build_mcp_server(open_scope: ToolScopeFactory) -> MCPServer:
+    """Build the MCP server with its catalog and cart tools, each run inside a `ToolScope`."""
     server = MCPServer(
         name="agentic-commerce-gateway",
         title="Store checkout",

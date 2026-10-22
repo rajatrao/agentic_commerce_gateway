@@ -38,6 +38,7 @@ import type {
  * FastAPI directly. Every call carries a freshly minted service JWT for the merchant.
  */
 
+/** A non-2xx response from backend-engine, with its status and `detail`. */
 export class BackendError extends Error {
   constructor(
     public readonly status: number,
@@ -76,6 +77,10 @@ interface RequestOptions {
   timeoutMs?: number;
 }
 
+/**
+ * Calls a backend-engine route as `shop` with a fresh service JWT and returns
+ * the parsed JSON. Throws `BackendError` on a non-2xx response.
+ */
 export async function backendRequest<T>(
   shop: string,
   path: string,
@@ -117,6 +122,7 @@ export async function backendRequest<T>(
   return (await response.json()) as T;
 }
 
+/** One method per backend-engine route used by the admin UI. */
 export const backend = {
   /** Called from the Shopify `afterAuth` hook: registers the shop and hands over its token. */
   syncMerchant(shop: string, accessToken: string, scopes: string | undefined) {
@@ -131,6 +137,7 @@ export const backend = {
     );
   },
 
+  /** The most recent installation check, or null if none has run. */
   async latestInstallationCheck(
     shop: string,
   ): Promise<InstallationCheck | null> {
@@ -145,16 +152,22 @@ export const backend = {
     }
   },
 
+  /** Queues a catalog audit. */
   startAudit(shop: string) {
     return backendRequest<AuditRun>(shop, "/api/v1/merchant/audits", {
       method: "POST",
     });
   },
 
+  /** The latest audit run and the latest completed audit's summary. */
   auditSummary(shop: string) {
     return backendRequest<AuditSummary>(shop, "/api/v1/merchant/audits/latest");
   },
 
+  /**
+   * A page of the latest audit's product scores, or null before the first audit
+   * completes.
+   */
   async auditProducts(
     shop: string,
     params: {
@@ -181,6 +194,7 @@ export const backend = {
     }
   },
 
+  /** The store's agent API keys. */
   agentClients(shop: string) {
     return backendRequest<AgentClient[]>(
       shop,
@@ -188,6 +202,10 @@ export const backend = {
     );
   },
 
+  /**
+   * Issues an agent API key. The response holds the only copy of the plaintext
+   * key.
+   */
   createAgentClient(shop: string, name: string, protocol: AgentProtocol) {
     return backendRequest<AgentClientCreated>(
       shop,
@@ -196,6 +214,7 @@ export const backend = {
     );
   },
 
+  /** Revokes an agent API key. */
   revokeAgentClient(shop: string, id: string) {
     return backendRequest<void>(
       shop,
@@ -204,6 +223,7 @@ export const backend = {
     );
   },
 
+  /** A page of carts that agents built for the store. */
   agentCheckouts(shop: string, limit = 50, offset = 0) {
     return backendRequest<AgentCheckoutPage>(
       shop,
@@ -211,6 +231,7 @@ export const backend = {
     );
   },
 
+  /** Runs a storefront installation check (can take up to a minute). */
   runInstallationCheck(shop: string, storeUrl?: string) {
     return backendRequest<InstallationCheck>(
       shop,
@@ -225,14 +246,17 @@ export const backend = {
 
   // ---------------------------------------------------------------- catalog intelligence
 
+  /** Dashboard numbers for catalog readiness. */
   catalogOverview(shop: string) {
     return backendRequest<CatalogOverview>(shop, `${CATALOG}/overview`);
   },
 
+  /** Recent audit runs. */
   auditRuns(shop: string, limit = 20) {
     return backendRequest<RunPoint[]>(shop, `${CATALOG}/runs?limit=${limit}`);
   },
 
+  /** A filtered page of audited products. */
   catalogProducts(shop: string, params: Record<string, string | number> = {}) {
     return backendRequest<Page<CatalogProduct>>(
       shop,
@@ -240,6 +264,7 @@ export const backend = {
     );
   },
 
+  /** One product's detail, or null if it has not been audited. */
   async catalogProduct(
     shop: string,
     productId: string,
@@ -255,6 +280,7 @@ export const backend = {
     }
   },
 
+  /** A filtered page of current catalog findings. */
   catalogFindings(shop: string, params: Record<string, string | number> = {}) {
     return backendRequest<Page<CatalogFinding>>(
       shop,
@@ -262,6 +288,7 @@ export const backend = {
     );
   },
 
+  /** Queues an enrichment job for chosen products or the least-ready ones. */
   startEnrichment(
     shop: string,
     body: {
@@ -276,10 +303,12 @@ export const backend = {
     });
   },
 
+  /** Recent enrichment jobs. */
   enrichmentJobs(shop: string) {
     return backendRequest<EnrichmentJob[]>(shop, `${CATALOG}/enrichment-jobs`);
   },
 
+  /** One enrichment job with its per-product results. */
   enrichmentJob(shop: string, id: string) {
     return backendRequest<EnrichmentJob>(
       shop,
@@ -287,6 +316,7 @@ export const backend = {
     );
   },
 
+  /** Queues a new enrichment job for the products that failed in this one. */
   retryEnrichmentJob(shop: string, id: string) {
     return backendRequest<EnrichmentJob>(
       shop,
@@ -295,6 +325,7 @@ export const backend = {
     );
   },
 
+  /** A filtered page of the review queue. */
   suggestions(shop: string, params: Record<string, string | number> = {}) {
     return backendRequest<Page<Suggestion>>(
       shop,
@@ -302,6 +333,7 @@ export const backend = {
     );
   },
 
+  /** Approves, edits, rejects or reopens suggestions in bulk. */
   reviewSuggestions(shop: string, actions: ReviewAction[]) {
     return backendRequest<ReviewResult>(shop, `${CATALOG}/suggestions/review`, {
       method: "POST",
@@ -309,6 +341,10 @@ export const backend = {
     });
   },
 
+  /**
+   * What publishing the approved suggestions would write to Shopify. Writes
+   * nothing.
+   */
   previewPublish(shop: string, suggestionIds?: string[]) {
     return backendRequest<PublishPreview>(shop, `${CATALOG}/publish/preview`, {
       method: "POST",
@@ -325,6 +361,7 @@ export const backend = {
     });
   },
 
+  /** One publish job's progress and results. */
   publishJob(shop: string, id: string) {
     return backendRequest<CatalogJob>(
       shop,
@@ -332,6 +369,7 @@ export const backend = {
     );
   },
 
+  /** Recent publish jobs. */
   publishJobs(shop: string, limit = 10) {
     return backendRequest<CatalogJob[]>(
       shop,
@@ -339,12 +377,16 @@ export const backend = {
     );
   },
 
+  /**
+   * Queues a run of the schemas' shopper questions against the store's search.
+   */
   startDiscoveryRun(shop: string) {
     return backendRequest<CatalogJob>(shop, `${CATALOG}/discovery-runs`, {
       method: "POST",
     });
   },
 
+  /** Recent discovery test runs. */
   discoveryRuns(shop: string, limit = 10) {
     return backendRequest<CatalogJob[]>(
       shop,
@@ -352,10 +394,12 @@ export const backend = {
     );
   },
 
+  /** Auto-approval rules per schema and what they recently approved. */
   autoApprovalReport(shop: string) {
     return backendRequest<AutoApprovalReport>(shop, `${CATALOG}/auto-approval`);
   },
 
+  /** Saves a schema's auto-approval rule. */
   saveAutoApproval(shop: string, schemaKey: string, rule: AutoApprovalRule) {
     return backendRequest<SchemaEntry>(
       shop,
@@ -364,6 +408,7 @@ export const backend = {
     );
   },
 
+  /** Applies a schema's enabled rule to its pending suggestions now. */
   applyAutoApproval(shop: string, schemaKey: string) {
     return backendRequest<{ approved: number }>(
       shop,
@@ -372,6 +417,7 @@ export const backend = {
     );
   },
 
+  /** A filtered page of the catalog change log. */
   catalogChanges(
     shop: string,
     params: Record<string, string | number | boolean> = {},
@@ -382,6 +428,7 @@ export const backend = {
     );
   },
 
+  /** Restores a published value in Shopify to what it was before. */
   revertChange(shop: string, id: number) {
     return backendRequest<CatalogChange>(
       shop,
@@ -390,10 +437,12 @@ export const backend = {
     );
   },
 
+  /** Category schemas in effect for the store. */
   schemas(shop: string) {
     return backendRequest<SchemaEntry[]>(shop, `${CATALOG}/schemas`);
   },
 
+  /** Saves the store's custom version of a category schema. */
   saveSchema(shop: string, schema: CategorySchema) {
     return backendRequest<SchemaEntry>(
       shop,
@@ -402,6 +451,10 @@ export const backend = {
     );
   },
 
+  /**
+   * Drops the store's version of a schema: a built-in one reverts to its default,
+   * an added one is removed.
+   */
   resetSchema(shop: string, key: string) {
     return backendRequest<void>(
       shop,
@@ -410,6 +463,10 @@ export const backend = {
     );
   },
 
+  /**
+   * Where each attribute is written in Shopify, optionally checked against the
+   * store's definitions.
+   */
   mappings(shop: string, checkShopify = false) {
     return backendRequest<MetafieldMappingEntry[]>(
       shop,
@@ -418,6 +475,7 @@ export const backend = {
     );
   },
 
+  /** Changes the metafield an attribute is written to. */
   saveMapping(
     shop: string,
     attributeKey: string,
@@ -430,6 +488,7 @@ export const backend = {
     );
   },
 
+  /** The store's meta-mapping rules. */
   mappingRules(shop: string) {
     return backendRequest<MappingRule[]>(
       shop,
@@ -437,6 +496,7 @@ export const backend = {
     );
   },
 
+  /** Creates a meta-mapping rule. */
   createMappingRule(shop: string, body: MappingRuleInput) {
     return backendRequest<MappingRule>(shop, "/api/v1/merchant/mapping-rules", {
       method: "POST",
@@ -453,6 +513,7 @@ export const backend = {
     );
   },
 
+  /** Turns a meta-mapping rule on or off. */
   setMappingRuleActive(shop: string, id: string, active: boolean) {
     return backendRequest<MappingRule>(
       shop,
@@ -461,6 +522,7 @@ export const backend = {
     );
   },
 
+  /** Deletes a meta-mapping rule. */
   deleteMappingRule(shop: string, id: string) {
     return backendRequest<void>(
       shop,
@@ -469,10 +531,12 @@ export const backend = {
     );
   },
 
+  /** The store's catalog settings. */
   catalogSettings(shop: string) {
     return backendRequest<CatalogSettings>(shop, `${CATALOG}/settings`);
   },
 
+  /** Saves the readiness weights and ready threshold. */
   saveCatalogSettings(
     shop: string,
     body: {

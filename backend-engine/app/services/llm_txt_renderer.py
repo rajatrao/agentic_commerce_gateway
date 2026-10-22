@@ -77,6 +77,7 @@ def _store_url(shop: dict[str, Any]) -> str:
 
 
 def render_header(shop: dict[str, Any], faqs: list[dict[str, str]]) -> str:
+    """Render the `llm.txt` title, summary, store facts, policies and FAQs."""
     name = _one_line(shop.get("name")) or "Store"
     url = _store_url(shop)
     summary = _one_line(shop.get("description")) or f"Official online store of {name}."
@@ -109,6 +110,7 @@ def render_header(shop: dict[str, Any], faqs: list[dict[str, str]]) -> str:
 
 
 def render_collection(collection: dict[str, Any], store_url: str) -> str:
+    """Render one collection as a Markdown link line."""
     title = _one_line(collection.get("title"))
     url = f"{store_url}/collections/{collection.get('handle')}"
     count = (collection.get("productsCount") or {}).get("count")
@@ -124,6 +126,7 @@ def render_collection(collection: dict[str, Any], store_url: str) -> str:
 def render_product(
     product: dict[str, Any], store_url: str, rules: list[MappingRule] | None = None
 ) -> str:
+    """Render one product as a compact Markdown section, applying the merchant's mapping rules."""
     title = _one_line(product.get("title"))
     url = product.get("onlineStoreUrl") or f"{store_url}/products/{product.get('handle')}"
     lines = [f"### {title}", f"- URL: {url}"]
@@ -180,6 +183,8 @@ async def render_llm_txt(
     rules: list[MappingRule] | None = None,
     max_products: int = 2000,
 ) -> AsyncIterator[str]:
+    """Yield the whole `llm.txt` document in chunks: header, collections, then up to `max_products`
+    products."""
     store_url = _store_url(shop)
     yield render_header(shop, faqs or [])
 

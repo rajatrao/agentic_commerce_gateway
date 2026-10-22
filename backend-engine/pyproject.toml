@@ -49,12 +49,13 @@ line-length = 100
 target-version = "py312"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "B", "UP", "S", "ASYNC"]
+# D10x: every public module, class, method and function has a docstring.
+select = ["E", "F", "I", "B", "UP", "S", "ASYNC", "D100", "D101", "D102", "D103", "D104"]
 ignore = ["S101"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S105", "S106", "S107"]
-"migrations/**" = ["E501"]
+"tests/**" = ["S105", "S106", "S107", "D"]
+"migrations/**" = ["E501", "D"]
 
 [tool.mypy]
 python_version = "3.12"

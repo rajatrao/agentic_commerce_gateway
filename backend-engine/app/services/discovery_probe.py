@@ -42,12 +42,16 @@ class ProbeUnavailable(Exception):
 
 @dataclass
 class SearchHit:
+    """A product a store search returned."""
+
     product_gid: str
     title: str
 
 
 @dataclass
 class QueryResult:
+    """The products one shopper question returned, and how they were searched."""
+
     schema_key: str
     query: str
     attributes: list[str]
@@ -58,6 +62,8 @@ class QueryResult:
     def measure(
         self, schema_gids: set[str], answerable: dict[str, str], limit: int
     ) -> dict[str, Any]:
+        """Compute recall and precision of the top results against the products that can answer the
+        question."""
         top = self.hits[:limit]
         found = [h for h in top if h.product_gid in answerable]
         missed = [
@@ -120,6 +126,9 @@ def _parse_body(response: httpx.Response) -> Any:
 
 
 class DiscoveryProbe:
+    """Asks the store's search a shopper question, through Storefront MCP with Admin search as the
+    fallback."""
+
     def __init__(
         self, http: httpx.AsyncClient, shop_domain: str, admin: ShopifyAdminClient, limit: int
     ) -> None:
@@ -168,6 +177,7 @@ class DiscoveryProbe:
         ]
 
     async def search(self, schema_key: str, query: str, attributes: list[str]) -> QueryResult:
+        """Run one shopper question and return the products the store's search found."""
         result = QueryResult(schema_key, query, attributes, self.method)
         if self.method == "storefront_mcp":
             try:

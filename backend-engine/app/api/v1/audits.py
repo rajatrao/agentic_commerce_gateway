@@ -78,6 +78,7 @@ async def start_audit(
 
 @router.get("/audits/latest", response_model=AuditSummaryOut)
 async def latest_audit(merchant: CurrentMerchant, session: SessionDep) -> AuditSummaryOut:
+    """Return the latest audit run and the summary of the latest completed one."""
     audits = AuditRepository(session)
     latest = await audits.latest_run(merchant.id)
     completed = await audits.latest_run(merchant.id, completed_only=True)
@@ -118,6 +119,7 @@ async def latest_audit_products(
     limit: int = Query(50, ge=1, le=250),
     offset: int = Query(0, ge=0),
 ) -> ProductAuditPage:
+    """Page through the latest completed audit's per-product scores, filtered by score or issue."""
     audits = AuditRepository(session)
     completed = await audits.latest_run(merchant.id, completed_only=True)
     if completed is None:
@@ -163,6 +165,7 @@ def _rule_out(rule: MetaMappingRule) -> MappingRuleOut:
 async def list_mapping_rules(
     merchant: CurrentMerchant, session: SessionDep
 ) -> list[MappingRuleOut]:
+    """List the merchant's meta-mapping rules."""
     return [_rule_out(r) for r in await MappingRuleRepository(session).list_for(merchant.id)]
 
 
@@ -195,6 +198,7 @@ async def _rules_changed(merchant: CurrentMerchant, session: SessionDep, ttl: in
 async def create_mapping_rule(
     body: MappingRuleIn, merchant: CurrentMerchant, session: SessionDep, settings: SettingsDep
 ) -> MappingRuleOut:
+    """Create a meta-mapping rule and invalidate the cached `llm.txt`."""
     _validate_rule(body)
     rule = MetaMappingRule(
         merchant_id=merchant.id,
@@ -257,6 +261,7 @@ async def update_mapping_rule(
     session: SessionDep,
     settings: SettingsDep,
 ) -> MappingRuleOut:
+    """Turn a meta-mapping rule on or off and invalidate the cached `llm.txt`."""
     repo = MappingRuleRepository(session)
     rule = await repo.get(merchant.id, rule_id)
     if rule is None:
@@ -273,6 +278,7 @@ async def update_mapping_rule(
 async def delete_mapping_rule(
     rule_id: uuid.UUID, merchant: CurrentMerchant, session: SessionDep, settings: SettingsDep
 ) -> None:
+    """Delete a meta-mapping rule and invalidate the cached `llm.txt`."""
     if not await MappingRuleRepository(session).delete(merchant.id, rule_id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "rule not found")
     await _rules_changed(merchant, session, settings.llm_txt_cache_seconds)
@@ -283,6 +289,7 @@ async def delete_mapping_rule(
 
 @router.get("/faqs", response_model=FaqList)
 async def get_faqs(merchant: CurrentMerchant) -> FaqList:
+    """Return the store FAQs published in `llm.txt`."""
     return FaqList.model_validate({"faqs": merchant.settings.get("faqs", [])})
 
 
@@ -290,6 +297,7 @@ async def get_faqs(merchant: CurrentMerchant) -> FaqList:
 async def put_faqs(
     body: FaqList, merchant: CurrentMerchant, session: SessionDep, settings: SettingsDep
 ) -> FaqList:
+    """Replace the store FAQs and invalidate the cached `llm.txt`."""
     merchant.settings = {**merchant.settings, "faqs": [f.model_dump() for f in body.faqs]}
     flag_modified(merchant, "settings")
     session.add(merchant)

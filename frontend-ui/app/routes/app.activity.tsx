@@ -29,6 +29,9 @@ const STATUS_TONES = {
   failed: "critical",
 } as const;
 
+/**
+ * Loads recent audit runs, enrichment jobs, publish jobs and Shopify writes.
+ */
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const url = new URL(request.url);
@@ -47,6 +50,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   return { runs, jobs, publishJobs, changes, writesOnly, page };
 };
 
+/**
+ * Retries an enrichment job's failed products, or reverts a published change.
+ */
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const form = await request.formData();
@@ -73,6 +79,10 @@ function active(status: string) {
   return status === "queued" || status === "running";
 }
 
+/**
+ * Sync and jobs page: audits, enrichment jobs, writes to Shopify and the change
+ * log.
+ */
 export default function Activity() {
   const { runs, jobs, publishJobs, changes, writesOnly, page } =
     useLoaderData<typeof loader>();
@@ -337,6 +347,7 @@ function JobRow({
   );
 }
 
+/** Adds the headers Shopify's embedded app boundary needs. */
 export const headers: HeadersFunction = (headersArgs) => {
   return boundary.headers(headersArgs);
 };

@@ -83,6 +83,7 @@ function toInput(form: FormData): MappingRuleInput {
   };
 }
 
+/** Loads the store's meta-mapping rules. */
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   return { rules: await backend.mappingRules(session.shop) };
@@ -96,6 +97,10 @@ type ActionResult = {
   error: string | null;
 };
 
+/**
+ * Creates, previews, toggles or deletes a meta-mapping rule, depending on
+ * `intent`.
+ */
 export const action = async ({
   request,
 }: ActionFunctionArgs): Promise<ActionResult> => {
@@ -137,6 +142,10 @@ export const action = async ({
   }
 };
 
+/**
+ * Meta mapping rules page: turn tags, metafields, types and vendors into
+ * product properties.
+ */
 export default function MappingRules() {
   const { rules } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
@@ -404,6 +413,7 @@ function RuleTable({
   );
 }
 
+/** Adds the headers Shopify's embedded app boundary needs. */
 export const headers: HeadersFunction = (headersArgs) => {
   return boundary.headers(headersArgs);
 };

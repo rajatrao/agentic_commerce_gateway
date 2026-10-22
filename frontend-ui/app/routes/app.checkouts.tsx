@@ -17,6 +17,7 @@ const STATUS: Record<
   expired: { label: "Expired", tone: "warning" },
 };
 
+/** Loads the carts agents built for the store. */
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   return { checkouts: await backend.agentCheckouts(session.shop) };
@@ -29,6 +30,9 @@ function money(amount: string, currency: string) {
   }).format(Number(amount));
 }
 
+/**
+ * Agent checkouts page: carts agents built and the Shopify orders they became.
+ */
 export default function Checkouts() {
   const { checkouts } = useLoaderData<typeof loader>();
 
@@ -98,6 +102,7 @@ export default function Checkouts() {
   );
 }
 
+/** Adds the headers Shopify's embedded app boundary needs. */
 export const headers: HeadersFunction = (headersArgs) => {
   return boundary.headers(headersArgs);
 };

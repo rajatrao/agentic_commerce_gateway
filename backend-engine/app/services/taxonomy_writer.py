@@ -120,6 +120,7 @@ def match_values(raw: Any, choices: list[dict[str, str]]) -> tuple[list[dict[str
 
 
 def find_attribute(category: dict[str, Any] | None, name: str) -> dict[str, Any] | None:
+    """Find the category's choice-list attribute with this name, by exact or unique suffix match."""
     nodes = [
         n
         for n in ((category or {}).get("attributes") or {}).get("nodes") or []
@@ -137,6 +138,8 @@ def find_attribute(category: dict[str, Any] | None, name: str) -> dict[str, Any]
 
 @dataclass
 class TaxonomyRequest:
+    """An approved value to add to a product's standard category metafield."""
+
     suggestion_id: str
     product_gid: str
     product_title: str
@@ -146,6 +149,9 @@ class TaxonomyRequest:
 
 @dataclass
 class TaxonomyItem:
+    """What publishing would do to one product's category metafield: add values, leave it unchanged
+    or skip it."""
+
     suggestion_ids: list[str]
     product_gid: str
     product_title: str
@@ -163,9 +169,11 @@ class TaxonomyItem:
 
     @property
     def metafield(self) -> str:
+        """The category metafield as `shopify.<key>`."""
         return f"{NAMESPACE}.{self.key}" if self.key else f"{NAMESPACE}.?"
 
     def current_ids(self) -> list[str]:
+        """Return the metaobject ids currently in the metafield."""
         try:
             parsed = json.loads(self.current_value or "[]")
         except json.JSONDecodeError:
@@ -173,6 +181,7 @@ class TaxonomyItem:
         return [str(i) for i in parsed] if isinstance(parsed, list) else []
 
     def as_json(self) -> dict[str, Any]:
+        """Return the item as a JSON-serializable dict."""
         return {
             "suggestion_ids": self.suggestion_ids,
             "product_gid": self.product_gid,
@@ -189,6 +198,8 @@ class TaxonomyItem:
 
 @dataclass
 class TaxonomyOutcome:
+    """The result of writing one taxonomy item, with the metafield value before and after."""
+
     item: TaxonomyItem
     ok: bool
     before: str | None = None
@@ -197,6 +208,8 @@ class TaxonomyOutcome:
 
 
 class TaxonomyWriter:
+    """Plans and writes approved values to Shopify's standard category metafields."""
+
     def __init__(self, client: ShopifyAdminClient) -> None:
         self.client = client
         self._definitions: dict[str, dict[str, Any]] | None = None
@@ -250,6 +263,7 @@ class TaxonomyWriter:
         return self._entries[metaobject_type]
 
     async def plan(self, requests: list[TaxonomyRequest]) -> list[TaxonomyItem]:
+        """Group requests per product and attribute and work out which category values to add."""
         products: dict[str, dict[str, Any] | None] = {}
         grouped: dict[tuple[str, str], TaxonomyItem] = {}
         raw: dict[tuple[str, str], list[Any]] = {}
@@ -374,6 +388,8 @@ class TaxonomyWriter:
         return entry_id
 
     async def publish(self, items: list[TaxonomyItem]) -> list[TaxonomyOutcome]:
+        """Add the planned values, creating their metaobject entries when needed, and return each
+        outcome."""
         outcomes: list[TaxonomyOutcome] = []
         for item in items:
             if item.action != "add":
@@ -425,4 +441,6 @@ class TaxonomyWriter:
 
 
 class TaxonomyError(Exception):
+    """Shopify refused to create a category metaobject entry."""
+
     pass

@@ -18,6 +18,8 @@ adapter = UcpAdapter()
 
 @discovery_router.get("/.well-known/ucp", summary="UCP business profile (discovery)")
 def ucp_profile(request: Request, settings: SettingsDep) -> dict[str, Any]:
+    """Serve the UCP business profile that tells agents which services and capabilities this gateway
+    offers."""
     base = (settings.public_base_url or str(request.base_url)).rstrip("/")
     profile = envelope()
     profile["services"] = {
@@ -45,6 +47,8 @@ async def _handler(
 async def create_session(
     request: Request, session: SessionDep, settings: SettingsDep, tokens: TokenProviderDep
 ) -> JSONResponse:
+    """Create a UCP checkout session (cart) from the agent's line items. Requires an
+    Idempotency-Key."""
     h = await _handler(request, session, settings, tokens)
     body = await h.body()
 
@@ -67,6 +71,7 @@ async def get_session(
     settings: SettingsDep,
     tokens: TokenProviderDep,
 ) -> JSONResponse:
+    """Return a UCP checkout session owned by the calling agent's merchant."""
     h = await _handler(request, session, settings, tokens)
     return h.respond(await h.cart(session_id))
 
@@ -79,6 +84,7 @@ async def update_session(
     settings: SettingsDep,
     tokens: TokenProviderDep,
 ) -> JSONResponse:
+    """Apply line, buyer or address changes to a UCP checkout session and re-price it."""
     h = await _handler(request, session, settings, tokens)
     body = await h.body()
 
@@ -97,6 +103,7 @@ async def cancel_session(
     settings: SettingsDep,
     tokens: TokenProviderDep,
 ) -> JSONResponse:
+    """Cancel a UCP checkout session."""
     h = await _handler(request, session, settings, tokens)
 
     async def op() -> AgentCart:
@@ -117,5 +124,7 @@ async def complete_session(
     settings: SettingsDep,
     tokens: TokenProviderDep,
 ) -> JSONResponse:
+    """Always rejected: the buyer completes payment on the store's own Shopify checkout via
+    `continue_url`."""
     h = await _handler(request, session, settings, tokens)
     raise handoff_error(await h.cart(session_id))

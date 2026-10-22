@@ -18,6 +18,8 @@ class ServiceTokenJti(SQLModel, table=True):
 
 
 class LlmTxtCacheEntry(SQLModel, table=True):
+    """The last rendered `llm.txt` for a shop, shared across replicas."""
+
     __tablename__ = "llm_txt_cache"
 
     shop_domain: str = Field(sa_column=Column(String, primary_key=True))

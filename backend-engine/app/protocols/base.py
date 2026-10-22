@@ -41,25 +41,32 @@ class ProtocolError(Exception):
 
     @classmethod
     def from_cart_error(cls, exc: CartError) -> "ProtocolError":
+        """Map a `CartError` to the matching HTTP status."""
         status = {"not_found": 404, "not_modifiable": 405}.get(exc.code, 400)
         return cls(status, exc.code, exc.message, exc.path)
 
     @classmethod
     def from_validation(cls, exc: ValidationError) -> "ProtocolError":
+        """Turn the first Pydantic validation error into a 400 with a JSON path."""
         first = exc.errors()[0]
         path = "$." + ".".join(str(p) for p in first["loc"]) if first["loc"] else None
         return cls(400, "invalid", first["msg"], path)
 
 
 class ProtocolAdapter(ABC):
+    """Base class for a protocol adapter: validates request bodies into `CartChanges` and renders
+    carts and errors."""
+
     protocol: ClassVar[AgentProtocol]
     create_model: ClassVar[type[BaseModel]]
     update_model: ClassVar[type[BaseModel]]
 
     def parse_create(self, body: Any) -> CartChanges:
+        """Validate a create request body and convert it to `CartChanges`."""
         return self._changes(self._validate(self.create_model, body))
 
     def parse_update(self, body: Any) -> CartChanges:
+        """Validate an update request body and convert it to `CartChanges`."""
         return self._changes(self._validate(self.update_model, body))
 
     @staticmethod
@@ -73,10 +80,12 @@ class ProtocolAdapter(ABC):
     def _changes(self, request: BaseModel) -> CartChanges: ...
 
     @abstractmethod
-    def render(self, cart: AgentCart) -> dict[str, Any]: ...
+    def render(self, cart: AgentCart) -> dict[str, Any]:
+        """Render a cart in this protocol's response shape."""
 
     @abstractmethod
-    def render_error(self, error: ProtocolError) -> dict[str, Any]: ...
+    def render_error(self, error: ProtocolError) -> dict[str, Any]:
+        """Render an error in this protocol's error shape."""
 
 
 def handoff_error(cart: AgentCart) -> ProtocolError:
@@ -95,6 +104,7 @@ def handoff_error(cart: AgentCart) -> ProtocolError:
 
 
 def split_name(name: str | None) -> tuple[str | None, str | None]:
+    """Split a full name into first name and the rest."""
     if not name or not name.strip():
         return None, None
     first, _, last = name.strip().partition(" ")

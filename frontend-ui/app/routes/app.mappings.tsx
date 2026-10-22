@@ -24,6 +24,10 @@ const STATUS = {
   unknown: { tone: "neutral", label: "Not checked" },
 } as const;
 
+/**
+ * Loads the attribute-to-metafield mappings, checked against Shopify when
+ * `?check=1`.
+ */
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const check = new URL(request.url).searchParams.get("check") === "1";
@@ -43,6 +47,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   }
 };
 
+/** Saves the metafield an attribute is written to. */
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const form = await request.formData();
@@ -59,6 +64,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 };
 
+/**
+ * Metafield mapping page: where each schema attribute is written in Shopify.
+ */
 export default function Mappings() {
   const { mappings, checked, checkError } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
@@ -234,6 +242,7 @@ function MappingRow({
   );
 }
 
+/** Adds the headers Shopify's embedded app boundary needs. */
 export const headers: HeadersFunction = (headersArgs) => {
   return boundary.headers(headersArgs);
 };

@@ -33,6 +33,7 @@ def _out(client: AgentClient) -> AgentClientOut:
 async def list_agent_clients(
     merchant: CurrentMerchant, session: SessionDep
 ) -> list[AgentClientOut]:
+    """List the merchant's agent API keys (without secrets)."""
     return [_out(c) for c in await AgentClientRepository(session).list_for(merchant.id)]
 
 
@@ -42,6 +43,7 @@ async def list_agent_clients(
 async def create_agent_client(
     body: AgentClientIn, merchant: CurrentMerchant, session: SessionDep
 ) -> AgentClientCreated:
+    """Issue a new agent API key. The plaintext key is returned once and only its hash is stored."""
     repo = AgentClientRepository(session)
     if await repo.count_active(merchant.id) >= MAX_ACTIVE_KEYS:
         raise HTTPException(status.HTTP_409_CONFLICT, "too many active keys; revoke one first")
@@ -56,5 +58,6 @@ async def create_agent_client(
 async def revoke_agent_client(
     client_id: uuid.UUID, merchant: CurrentMerchant, session: SessionDep
 ) -> None:
+    """Revoke one of the merchant's agent API keys."""
     if await AgentClientRepository(session).revoke(merchant.id, client_id) is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "agent client not found")

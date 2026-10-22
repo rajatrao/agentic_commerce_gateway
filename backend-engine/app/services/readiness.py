@@ -109,6 +109,8 @@ FOUNDATION_WHY: dict[str, str] = {
 
 @dataclass
 class Finding:
+    """A deterministic catalog finding, with why it matters and what to do about it."""
+
     code: str
     severity: str
     message: str
@@ -122,6 +124,8 @@ class Finding:
 
 @dataclass
 class ProductReadiness:
+    """A product's readiness score against its schema, with findings and current values."""
+
     schema_key: str
     score: int
     breakdown: dict[str, dict[str, Any]]
@@ -130,9 +134,11 @@ class ProductReadiness:
     extractions: dict[str, Extraction] = field(default_factory=dict)
 
     def attributes_json(self) -> dict[str, Any]:
+        """Return the current attribute values as JSON-serializable dicts."""
         return {k: v.as_json() for k, v in self.attributes.items()}
 
     def supports(self, keys: list[str]) -> bool:
+        """Whether every attribute in `keys` has a valid value."""
         return all(
             k in self.attributes and self.attributes[k].value is not None
             and not self.attributes[k].errors
@@ -141,6 +147,7 @@ class ProductReadiness:
 
 
 def normalize_weights(raw: dict[str, Any] | None) -> dict[str, int]:
+    """Merge valid custom component weights (0-100) over the defaults."""
     weights = dict(DEFAULT_WEIGHTS)
     for key, value in (raw or {}).items():
         if key in weights and isinstance(value, int) and 0 <= value <= 100:
@@ -166,6 +173,7 @@ def assess_product(
     mappings: dict[str, tuple[str, str]],
     weights: dict[str, int] | None = None,
 ) -> ProductReadiness:
+    """Match the product to a schema and compute its readiness score, breakdown and findings."""
     schema = match_schema(product, schemas)
     weights = normalize_weights(weights)
     current = current_attributes(product, schema, mappings, base.mapped_attributes)

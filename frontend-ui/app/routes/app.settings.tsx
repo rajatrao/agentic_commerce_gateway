@@ -27,11 +27,13 @@ const COMPONENT_HELP: Record<string, string> = {
     "The existing AI Discovery Score: title, description, media, identifiers, offers and taxonomy.",
 };
 
+/** Loads the store's catalog settings. */
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   return { settings: await backend.catalogSettings(session.shop) };
 };
 
+/** Saves the readiness weights and ready threshold. */
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const form = await request.formData();
@@ -60,6 +62,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 };
 
+/**
+ * Settings page: readiness weights, AI enrichment status and publishing
+ * options.
+ */
 export default function Settings() {
   const { settings: loaded } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
@@ -203,6 +209,7 @@ export default function Settings() {
   );
 }
 
+/** Adds the headers Shopify's embedded app boundary needs. */
 export const headers: HeadersFunction = (headersArgs) => {
   return boundary.headers(headersArgs);
 };

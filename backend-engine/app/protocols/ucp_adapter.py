@@ -49,16 +49,22 @@ class _Model(BaseModel):
 
 
 class UcpItemRef(_Model):
+    """Reference to a product or variant in a UCP line item."""
+
     id: str = Field(min_length=1, max_length=255)
 
 
 class UcpLineItem(_Model):
+    """A UCP line item: an item reference and a quantity."""
+
     id: str | None = None
     item: UcpItemRef
     quantity: int = Field(ge=1, le=999)
 
 
 class UcpBuyer(_Model):
+    """Buyer details a UCP agent may send to prefill checkout."""
+
     email: str | None = Field(default=None, max_length=256, pattern=EMAIL_PATTERN)
     first_name: str | None = Field(default=None, max_length=256)
     last_name: str | None = Field(default=None, max_length=256)
@@ -66,6 +72,8 @@ class UcpBuyer(_Model):
 
 
 class UcpDestination(_Model):
+    """A UCP shipping destination (postal address)."""
+
     id: str | None = None
     first_name: str | None = None
     last_name: str | None = None
@@ -79,11 +87,15 @@ class UcpDestination(_Model):
 
 
 class UcpGroup(_Model):
+    """A UCP fulfillment group with the agent's selected shipping option."""
+
     id: str | None = None
     selected_option_id: str | None = None
 
 
 class UcpMethod(_Model):
+    """A UCP fulfillment method: one shipping destination and its groups."""
+
     id: str | None = None
     type: str = "shipping"
     destinations: list[UcpDestination] = Field(default_factory=list, max_length=1)
@@ -92,22 +104,29 @@ class UcpMethod(_Model):
 
 
 class UcpFulfillment(_Model):
+    """The UCP fulfillment extension of a checkout request."""
+
     methods: list[UcpMethod] = Field(default_factory=list)
 
 
 class CreateCheckout(_Model):
+    """Body of a UCP create-checkout request."""
+
     line_items: list[UcpLineItem] = Field(min_length=1, max_length=100)
     buyer: UcpBuyer | None = None
     fulfillment: UcpFulfillment | None = None
 
 
 class UpdateCheckout(_Model):
+    """Body of a UCP update-checkout request. Omitted fields keep their current values."""
+
     line_items: list[UcpLineItem] | None = Field(default=None, min_length=1, max_length=100)
     buyer: UcpBuyer | None = None
     fulfillment: UcpFulfillment | None = None
 
 
 def envelope(status: str | None = None) -> dict[str, Any]:
+    """Build the `ucp` metadata block (version and capabilities) included in every UCP response."""
     ucp: dict[str, Any] = {
         "version": UCP_VERSION,
         "capabilities": {
@@ -121,6 +140,8 @@ def envelope(status: str | None = None) -> dict[str, Any]:
 
 
 class UcpAdapter(ProtocolAdapter):
+    """Translates UCP checkouts to `CartChanges` and renders carts as UCP checkouts."""
+
     protocol: ClassVar[AgentProtocol] = AgentProtocol.UCP
     create_model: ClassVar[type[BaseModel]] = CreateCheckout
     update_model: ClassVar[type[BaseModel]] = UpdateCheckout
@@ -173,6 +194,7 @@ class UcpAdapter(ProtocolAdapter):
         )
 
     def render(self, cart: AgentCart) -> dict[str, Any]:
+        """Render a cart as a UCP checkout, with amounts in minor units."""
         cur = cart.currency
         lines = cart.lines
         line_items = [
@@ -291,6 +313,7 @@ class UcpAdapter(ProtocolAdapter):
         return body
 
     def render_error(self, error: ProtocolError) -> dict[str, Any]:
+        """Render an error as a UCP error response."""
         out: dict[str, Any] = {
             "ucp": envelope("error"),
             "code": error.code,

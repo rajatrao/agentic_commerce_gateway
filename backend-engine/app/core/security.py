@@ -20,6 +20,8 @@ class AuthError(Exception):
 
 @dataclass(frozen=True)
 class ServiceClaims:
+    """The verified claims of a frontend-ui service JWT: shop, scopes, token id and expiry."""
+
     shop: str
     scopes: frozenset[str]
     jti: str
@@ -75,6 +77,7 @@ def mint_backend_service_jwt(shop: str, scope: list[str], settings: Settings) ->
 
 
 def verify_shopify_webhook_hmac(raw_body: bytes, hmac_header: str | None, secret: str) -> bool:
+    """Check a Shopify webhook's base64 HMAC-SHA256 header against the raw body in constant time."""
     if not hmac_header or not secret:
         return False
     digest = hmac.new(secret.encode(), raw_body, hashlib.sha256).digest()
@@ -91,9 +94,11 @@ class TokenCipher:
         self._fernet = Fernet(key.encode())
 
     def encrypt(self, plaintext: str) -> bytes:
+        """Encrypt a token for storage."""
         return self._fernet.encrypt(plaintext.encode())
 
     def decrypt(self, ciphertext: bytes) -> str:
+        """Decrypt a stored token, raising `AuthError` if it was altered or the key changed."""
         try:
             return self._fernet.decrypt(ciphertext).decode()
         except InvalidToken as exc:

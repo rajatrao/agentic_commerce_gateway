@@ -31,6 +31,10 @@ import {
 
 const POLL_MS = 3000;
 
+/**
+ * Loads the dashboard: latest installation check, audit summary and catalog
+ * overview.
+ */
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const shop = session.shop;
@@ -55,6 +59,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   };
 };
 
+/**
+ * Starts an audit, a discovery run or an enrichment of the 25 least-ready
+ * products, or runs the installation check, depending on `intent`.
+ */
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const form = await request.formData();
@@ -239,6 +247,10 @@ function isActive(status: string | undefined) {
   return status === "queued" || status === "running";
 }
 
+/**
+ * Dashboard: catalog readiness, AI Discovery Score, shopper-question coverage
+ * and storefront setup.
+ */
 export default function Dashboard() {
   const { shop, apiKey, check, summary, overview, backendError } =
     useLoaderData<typeof loader>();
@@ -725,6 +737,7 @@ function RecentActivity({ overview }: { overview: CatalogOverview }) {
   );
 }
 
+/** Adds the headers Shopify's embedded app boundary needs. */
 export const headers: HeadersFunction = (headersArgs) => {
   return boundary.headers(headersArgs);
 };

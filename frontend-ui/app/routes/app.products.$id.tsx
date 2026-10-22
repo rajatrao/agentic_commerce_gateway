@@ -22,6 +22,10 @@ import { SuggestionTable } from "../components/SuggestionTable";
 
 const POLL_MS = 3000;
 
+/**
+ * Loads one product's detail, the catalog settings and whether an enrichment
+ * job is working on it.
+ */
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const id = params.id ?? "";
@@ -49,6 +53,10 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   };
 };
 
+/**
+ * Enriches the product, reverts a change or applies review actions, depending
+ * on `intent`.
+ */
 export const action = async ({ request, params }: ActionFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const form = await request.formData();
@@ -78,6 +86,10 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
   }
 };
 
+/**
+ * Product page: readiness breakdown, attributes, findings, suggestions and
+ * history.
+ */
 export default function ProductDetail() {
   const { id, detail, aiEnabled, threshold, running } =
     useLoaderData<typeof loader>();
@@ -300,6 +312,7 @@ export default function ProductDetail() {
   );
 }
 
+/** Adds the headers Shopify's embedded app boundary needs. */
 export const headers: HeadersFunction = (headersArgs) => {
   return boundary.headers(headersArgs);
 };

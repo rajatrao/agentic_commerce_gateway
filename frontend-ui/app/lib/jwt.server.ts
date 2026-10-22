@@ -12,7 +12,9 @@ import { SignJWT, importPKCS8, type CryptoKey, type KeyObject } from "jose";
 
 export type ServiceScope = "merchant:read" | "merchant:write" | "internal:sync";
 
+/** `iss` claim of service JWTs minted here. */
 export const JWT_ISSUER = "frontend-ui";
+/** `aud` claim of service JWTs minted here. */
 export const JWT_AUDIENCE = "backend-engine";
 const TTL_SECONDS = 60;
 
@@ -34,6 +36,7 @@ export function resetKeyCache() {
   cachedKey = undefined;
 }
 
+/** Mints a 60-second Ed25519 service JWT for `shop` with the given scopes. */
 export async function mintServiceToken(
   shop: string,
   scope: ServiceScope[] = ["merchant:read", "merchant:write"],

@@ -90,6 +90,7 @@ async def run_refresh_job(
     tokens: ShopifyTokenProvider,
     settings: Settings,
 ) -> None:
+    """Re-read one product from Shopify and re-score it."""
     merchant = await _merchant(session, claim)
     repo = CatalogJobRepository(session)
     job = await repo.job_state(claim)
@@ -168,6 +169,8 @@ RUNNERS = {
 
 
 class CatalogJobWorker(QueueWorker):
+    """Runs catalog jobs of the given kinds (publish, refresh, discovery)."""
+
     name = "catalog"
 
     def __init__(
@@ -183,8 +186,10 @@ class CatalogJobWorker(QueueWorker):
         self.name = "catalog_" + "_".join(k.value for k in kinds)
 
     def queue(self, session: AsyncSession) -> JobQueue:
+        """Return the catalog job queue, limited to this worker's kinds."""
         return CatalogJobRepository(session, self.kinds)
 
     async def execute(self, session: AsyncSession, claim: ClaimedRun) -> Any:
+        """Run one catalog job with the runner for its kind."""
         job = await CatalogJobRepository(session).job_state(claim)
         await RUNNERS[job.kind](session, claim, self.http, self.tokens, self.settings)

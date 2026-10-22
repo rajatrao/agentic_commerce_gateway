@@ -1,3 +1,5 @@
+"""Agent carts."""
+
 import uuid
 from collections.abc import Iterable
 
@@ -10,10 +12,13 @@ from app.models.base import utcnow
 
 
 class CartRepository:
+    """Loads and saves agent carts, always scoped to a merchant."""
+
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
     async def get(self, merchant_id: uuid.UUID, cart_id: uuid.UUID) -> AgentCart | None:
+        """Return one of the merchant's carts, or None."""
         return (
             await self.session.exec(
                 select(AgentCart).where(
@@ -23,6 +28,7 @@ class CartRepository:
         ).first()
 
     async def save(self, cart: AgentCart) -> AgentCart:
+        """Persist a cart and return it refreshed."""
         self.session.add(cart)
         await self.session.commit()
         await self.session.refresh(cart)
@@ -31,6 +37,7 @@ class CartRepository:
     async def list_for(
         self, merchant_id: uuid.UUID, *, limit: int, offset: int
     ) -> tuple[int, list[AgentCart]]:
+        """Return the merchant's cart count and one page of carts, newest first."""
         total = (
             await self.session.exec(
                 select(func.count())
@@ -50,6 +57,7 @@ class CartRepository:
         return int(total), list(rows)
 
     async def count_ordered(self, merchant_id: uuid.UUID) -> int:
+        """Count the merchant's carts that became Shopify orders."""
         return int(
             (
                 await self.session.exec(

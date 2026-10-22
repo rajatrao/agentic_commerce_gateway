@@ -21,6 +21,8 @@ ACTIVE = (RunStatus.QUEUED, RunStatus.RUNNING)
 
 
 class CatalogJobRepository(QueueRepository):
+    """The catalog job queue, optionally limited to some job kinds."""
+
     model = CatalogJob
     stale_error = "catalog worker stopped responding"
 
@@ -29,6 +31,7 @@ class CatalogJobRepository(QueueRepository):
         self.kinds = tuple(kinds) if kinds else None
 
     def claim_filters(self) -> list[Any]:
+        """Limit claims to this repository's job kinds."""
         return [col(CatalogJob.kind).in_(self.kinds)] if self.kinds else []
 
     async def create(
@@ -73,12 +76,14 @@ class CatalogJobRepository(QueueRepository):
         return job, True
 
     async def get(self, merchant_id: uuid.UUID, job_id: uuid.UUID) -> CatalogJob | None:
+        """Return one of the merchant's catalog jobs."""
         job = await self.session.get(CatalogJob, job_id)
         return job if job is not None and job.merchant_id == merchant_id else None
 
     async def recent(
         self, merchant_id: uuid.UUID, kind: CatalogJobKind, limit: int = 20
     ) -> Sequence[CatalogJob]:
+        """Return the merchant's recent jobs of one kind, newest first."""
         return (
             await self.session.exec(
                 select(CatalogJob)
@@ -89,6 +94,7 @@ class CatalogJobRepository(QueueRepository):
         ).all()
 
     async def active(self, merchant_id: uuid.UUID, kind: CatalogJobKind) -> CatalogJob | None:
+        """Return the merchant's queued or running job of one kind, if any."""
         return (
             await self.session.exec(
                 select(CatalogJob).where(
@@ -102,6 +108,7 @@ class CatalogJobRepository(QueueRepository):
     async def latest_completed(
         self, merchant_id: uuid.UUID, kind: CatalogJobKind
     ) -> CatalogJob | None:
+        """Return the merchant's most recent completed job of one kind."""
         return (
             await self.session.exec(
                 select(CatalogJob)

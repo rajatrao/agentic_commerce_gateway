@@ -29,12 +29,14 @@ log = structlog.get_logger(__name__)
 
 
 def product_gid(payload: dict[str, Any]) -> str | None:
+    """Return the product's Admin GraphQL id from a webhook payload."""
     if gid := payload.get("admin_graphql_api_id"):
         return str(gid)
     return f"gid://shopify/Product/{payload['id']}" if payload.get("id") else None
 
 
 def product_summary(payload: dict[str, Any]) -> dict[str, Any]:
+    """Reduce a product webhook payload to the identifiers kept in the webhook log."""
     return {
         "id": payload.get("id"),
         "admin_graphql_api_id": product_gid(payload),
@@ -51,6 +53,8 @@ async def sync_product(
     payload: dict[str, Any],
     refresh_delay: float = 10.0,
 ) -> None:
+    """Apply a product webhook: mark deleted or inactive products removed, otherwise update the
+    snapshot and queue a delayed refresh."""
     merchant = await MerchantRepository(session).get_active_by_shop(shop)
     gid = product_gid(payload)
     if merchant is None or gid is None:
@@ -84,6 +88,7 @@ async def queue_refresh(
     source: str,
     delay: timedelta | None = None,
 ) -> None:
+    """Queue a refresh job for one product, de-duplicated by product id."""
     await CatalogJobRepository(session).create(
         merchant_id,
         CatalogJobKind.REFRESH,

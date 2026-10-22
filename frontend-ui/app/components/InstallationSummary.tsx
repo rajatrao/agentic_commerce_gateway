@@ -14,6 +14,7 @@ function StatusBadge({ ok, label }: { ok: boolean; label: string }) {
   );
 }
 
+/** Banners for each installation finding, with its fix and page. */
 export function FindingsList({ findings }: { findings: Finding[] }) {
   if (findings.length === 0) {
     return (
@@ -38,6 +39,7 @@ export function FindingsList({ findings }: { findings: Finding[] }) {
   );
 }
 
+/** Overall installation check result with a status badge per check. */
 export function InstallationSummary({ check }: { check: InstallationCheck }) {
   const { details } = check;
   return (

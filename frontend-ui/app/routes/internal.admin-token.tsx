@@ -59,5 +59,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 };
 
+/** Rejects GET: this route only accepts POST. */
 export const loader = () =>
   Response.json({ detail: "method not allowed" }, { status: 405 });

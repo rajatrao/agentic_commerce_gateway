@@ -120,6 +120,8 @@ def serialize(value: Any, attr: AttributeDefinition, metafield_type: str) -> str
 
 @dataclass
 class PlanItem:
+    """What publishing one suggestion would do to its metafield, and anything blocking it."""
+
     suggestion_id: str
     product_gid: str
     product_title: str
@@ -137,9 +139,11 @@ class PlanItem:
 
     @property
     def writable(self) -> bool:
+        """Whether the item creates or updates a value and nothing blocks it."""
         return self.action in ("create", "update") and not self.problems
 
     def as_json(self) -> dict[str, Any]:
+        """Return the item as a JSON-serializable dict."""
         return {
             "suggestion_id": self.suggestion_id,
             "product_gid": self.product_gid,
@@ -158,6 +162,8 @@ class PlanItem:
 
 @dataclass
 class WriteRequest:
+    """An approved value to write to a product metafield."""
+
     suggestion_id: str
     product_gid: str
     product_title: str
@@ -171,6 +177,8 @@ class WriteRequest:
 
 @dataclass
 class WriteOutcome:
+    """The result of writing one plan item."""
+
     item: PlanItem
     ok: bool
     error: str | None = None
@@ -178,11 +186,14 @@ class WriteOutcome:
 
 
 class MetafieldWriter:
+    """Plans and writes approved attribute values to Shopify product metafields."""
+
     def __init__(self, client: ShopifyAdminClient) -> None:
         self.client = client
         self._definitions: dict[tuple[str, str], str] | None = None
 
     async def definitions(self) -> dict[tuple[str, str], str]:
+        """Return the shop's product metafield definitions as {(namespace, key): type}, cached."""
         if self._definitions is None:
             self._definitions = {}
             async for node in self.client.paginate(DEFINITIONS_QUERY, ["metafieldDefinitions"]):
@@ -194,6 +205,8 @@ class MetafieldWriter:
         return data.get("product")
 
     async def plan(self, requests: list[WriteRequest]) -> list[PlanItem]:
+        """Compare each request with the product's current metafield and return what publishing
+        would do."""
         definitions = await self.definitions()
         products: dict[str, dict[str, Any] | None] = {}
         items: list[PlanItem] = []
@@ -287,6 +300,8 @@ class MetafieldWriter:
         return errors
 
     async def publish(self, items: list[PlanItem]) -> list[WriteOutcome]:
+        """Write the writable plan items, creating missing definitions first, and return each
+        outcome."""
         writable = [i for i in items if i.writable]
         outcomes: list[WriteOutcome] = [
             WriteOutcome(i, ok=i.action == "unchanged", error="; ".join(i.problems) or None)

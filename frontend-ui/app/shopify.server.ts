@@ -38,7 +38,9 @@ const shopify = shopifyApp({
     : {}),
 });
 
+/** The configured Shopify app instance. */
 export default shopify;
+/** Helpers from the Shopify app instance, re-exported for routes and hooks. */
 export const apiVersion = ApiVersion.October26;
 export const addDocumentResponseHeaders = shopify.addDocumentResponseHeaders;
 export const authenticate = shopify.authenticate;

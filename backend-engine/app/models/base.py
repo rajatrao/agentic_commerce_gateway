@@ -1,12 +1,11 @@
 """Shared model helpers. All domain tables live in the `gateway` Postgres schema."""
 
-import uuid
 from datetime import UTC, datetime
 from enum import StrEnum
 
 from sqlalchemy import Column, DateTime, MetaData
 from sqlalchemy import Enum as SAEnum
-from sqlmodel import Field, SQLModel
+from sqlmodel import SQLModel
 
 SCHEMA = "gateway"
 
@@ -24,18 +23,17 @@ SQLModel.metadata = MetaData(
 
 
 def utcnow() -> datetime:
+    """Return the current time as a timezone-aware UTC datetime."""
     return datetime.now(UTC)
 
 
-def uuid_pk() -> uuid.UUID:
-    return Field(default_factory=uuid.uuid4, primary_key=True)  # type: ignore[no-any-return]
-
-
 def tz_column(nullable: bool = False, **kwargs) -> Column:  # type: ignore[no-untyped-def,type-arg]
+    """Build a `timestamptz` column."""
     return Column(DateTime(timezone=True), nullable=nullable, **kwargs)
 
 
 def pg_enum(enum_cls: type[StrEnum], name: str) -> SAEnum:
+    """Build a Postgres enum type in the gateway schema that stores each member's value."""
     return SAEnum(
         enum_cls,
         name=name,

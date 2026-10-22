@@ -13,11 +13,16 @@ import { backend, errorMessage } from "../lib/backend.server";
 import type { AutoApprovalSchema } from "../lib/types";
 import { formatDate, productId } from "../components/Catalog";
 
+/** Loads each schema's auto-approval rule and recent automatic approvals. */
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   return { report: await backend.autoApprovalReport(session.shop) };
 };
 
+/**
+ * Saves or applies a schema's auto-approval rule, or sends an auto-approved
+ * value back to review.
+ */
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const form = await request.formData();
@@ -184,6 +189,7 @@ function RuleCard({ schema }: { schema: AutoApprovalSchema }) {
   );
 }
 
+/** Auto-approval page: per-schema rules and the values they approved. */
 export default function AutoApproval() {
   const { report } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
@@ -306,6 +312,7 @@ export default function AutoApproval() {
   );
 }
 
+/** Adds the headers Shopify's embedded app boundary needs. */
 export const headers: HeadersFunction = (headersArgs) => {
   return boundary.headers(headersArgs);
 };

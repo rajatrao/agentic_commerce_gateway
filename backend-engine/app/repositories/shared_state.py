@@ -47,12 +47,14 @@ class LlmTxtCacheRepository:
         self.ttl = timedelta(seconds=ttl_seconds)
 
     async def get(self, shop: str) -> str | None:
+        """Return the cached `llm.txt` for a shop if it is still fresh."""
         entry = await self.session.get(LlmTxtCacheEntry, shop)
         if entry is None or entry.generated_at <= utcnow() - self.ttl:
             return None
         return entry.body
 
     async def put(self, shop: str, body: str) -> None:
+        """Store a freshly rendered `llm.txt` for a shop."""
         now = utcnow()
         await self.session.exec(
             insert(LlmTxtCacheEntry)
@@ -64,6 +66,7 @@ class LlmTxtCacheRepository:
         await self.session.commit()
 
     async def invalidate(self, shop: str) -> None:
+        """Drop a shop's cached `llm.txt` so the next request re-renders it."""
         await self.session.exec(
             delete(LlmTxtCacheEntry).where(col(LlmTxtCacheEntry.shop_domain) == shop)
         )

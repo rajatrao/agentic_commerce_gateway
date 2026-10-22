@@ -50,17 +50,22 @@ from app.services.taxonomy_writer import (
 
 
 class ReviewError(Exception):
+    """A review, publish or revert request that cannot be carried out."""
+
     pass
 
 
 @dataclass
 class ReviewAction:
+    """One merchant decision on a suggestion: approve, edit (with a value), reject or reopen."""
+
     id: uuid.UUID
     action: Literal["approve", "edit", "reject", "reopen"]
     value: Any = None
 
 
 def attribute_for(config: CatalogConfig, s: AttributeSuggestion) -> AttributeDefinition | None:
+    """Find the attribute definition behind a suggestion, in its own schema or any other."""
     schema = config.schemas.get(s.schema_key)
     attr = schema.attribute(s.attribute_key) if schema else None
     if attr is None:
@@ -254,6 +259,8 @@ async def preview(
 
 @dataclass
 class BatchResult:
+    """Outcome of publishing a batch of suggestions to Shopify."""
+
     published: int = 0
     unchanged: int = 0
     failed: int = 0
@@ -397,6 +404,7 @@ async def _patch_snapshot(
 async def revert(
     session: AsyncSession, merchant: Merchant, writer: MetafieldWriter, change_id: int
 ) -> CatalogChange:
+    """Restore a published metafield to its previous value in Shopify and log the revert."""
     change = await CatalogRepository(session).change(merchant.id, change_id)
     if change is None:
         raise ReviewError("change not found")

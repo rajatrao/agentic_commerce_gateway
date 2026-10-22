@@ -38,6 +38,8 @@ async def shopify_webhook(
     x_shopify_shop_domain: Annotated[str | None, Header()] = None,
     x_shopify_webhook_id: Annotated[str | None, Header()] = None,
 ) -> dict[str, str]:
+    """Receive a Shopify webhook: verify its HMAC, store it once per webhook id and dispatch it by
+    topic."""
     raw = await request.body()
     if not verify_shopify_webhook_hmac(raw, x_shopify_hmac_sha256, settings.shopify_api_secret):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid hmac")

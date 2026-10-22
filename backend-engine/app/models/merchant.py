@@ -1,3 +1,5 @@
+"""Installed merchants and the agent API keys they issue."""
+
 import uuid
 from datetime import datetime
 from enum import StrEnum
@@ -11,17 +13,23 @@ from app.models.base import pg_enum, tz_column, utcnow
 
 
 class MerchantStatus(StrEnum):
+    """Whether the app is installed on the store."""
+
     ACTIVE = "active"
     UNINSTALLED = "uninstalled"
 
 
 class AgentProtocol(StrEnum):
+    """The agent protocols an API key can be issued for."""
+
     UCP = "ucp"
     ACP = "acp"
     MCP = "mcp"
 
 
 class Merchant(SQLModel, table=True):
+    """A Shopify store that installed the app, with its encrypted offline token and settings."""
+
     __tablename__ = "merchants"
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)

@@ -16,6 +16,8 @@ from app.services.shopify_client import ShopifyTokenProvider
 
 
 class EnrichmentWorker(QueueWorker):
+    """Runs queued enrichment jobs."""
+
     name = "enrichment"
 
     def __init__(
@@ -30,9 +32,11 @@ class EnrichmentWorker(QueueWorker):
         self.enricher = enricher
 
     def queue(self, session: AsyncSession) -> JobQueue:
+        """Return the enrichment job queue."""
         return EnrichmentRepository(session)
 
     async def execute(self, session: AsyncSession, claim: ClaimedRun) -> Any:
+        """Run one enrichment job."""
         await run_enrichment_job(
             session, claim, self.http, self.tokens, self.settings, self.enricher
         )

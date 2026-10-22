@@ -1,5 +1,6 @@
 import { Links, Meta, Outlet, Scripts, ScrollRestoration } from "react-router";
 
+/** Root HTML document for every route. */
 export default function App() {
   return (
     <html lang="en">

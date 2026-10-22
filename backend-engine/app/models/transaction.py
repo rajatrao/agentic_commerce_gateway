@@ -1,3 +1,5 @@
+"""Agent carts, idempotency records and received Shopify webhooks."""
+
 import uuid
 from datetime import datetime
 from decimal import Decimal
@@ -13,6 +15,8 @@ from app.models.merchant import AgentProtocol
 
 
 class CartStatus(StrEnum):
+    """Lifecycle of an agent cart."""
+
     OPEN = "open"
     READY = "ready"
     # The buyer placed an order on the store's Shopify checkout (linked by the orders/create
@@ -27,6 +31,9 @@ def _money() -> Any:
 
 
 class AgentCart(SQLModel, table=True):
+    """A cart an agent built through UCP, ACP or MCP, priced by Shopify and handed off to the
+    store's checkout."""
+
     __tablename__ = "agent_carts"
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
@@ -96,6 +103,8 @@ class IdempotencyRecord(SQLModel, table=True):
 
 
 class WebhookEvent(SQLModel, table=True):
+    """A received Shopify webhook, kept once per webhook id to de-duplicate deliveries."""
+
     __tablename__ = "webhook_events"
 
     id: int | None = Field(default=None, sa_column=Column(BigInteger, Identity(), primary_key=True))

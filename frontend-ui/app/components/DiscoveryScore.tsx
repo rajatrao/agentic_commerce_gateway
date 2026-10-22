@@ -18,6 +18,7 @@ const GRADES = [
   { key: "poor", label: "Poor (<50)", tone: "critical" },
 ] as const;
 
+/** Polaris badge tone for an AI Discovery Score grade. */
 export function scoreTone(
   score: number,
 ): "success" | "info" | "warning" | "critical" {
@@ -27,6 +28,9 @@ export function scoreTone(
   return "critical";
 }
 
+/**
+ * Card with the AI Discovery Score, grade counts and per-dimension averages.
+ */
 export function DiscoveryScore({ summary }: { summary: AuditSummary }) {
   const score = summary.ai_discovery_score
     ? Math.round(Number(summary.ai_discovery_score))
@@ -88,6 +92,9 @@ export function DiscoveryScore({ summary }: { summary: AuditSummary }) {
   );
 }
 
+/**
+ * List of the most common audit issues, each linking to the affected products.
+ */
 export function TopIssues({ summary }: { summary: AuditSummary }) {
   if (summary.top_issues.length === 0) return null;
   return (
@@ -106,6 +113,7 @@ export function TopIssues({ summary }: { summary: AuditSummary }) {
   );
 }
 
+/** Table of products with their score and the first few things to fix. */
 export function ProductIssueTable({ products }: { products: ProductAudit[] }) {
   if (products.length === 0) {
     return <s-paragraph>No products match.</s-paragraph>;

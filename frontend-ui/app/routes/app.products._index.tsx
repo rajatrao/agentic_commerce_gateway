@@ -26,6 +26,7 @@ import {
 const PAGE_SIZE = 50;
 const FILTERS = ["q", "schema", "severity", "code", "max_readiness"] as const;
 
+/** Loads a filtered page of audited products with the filter options. */
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const url = new URL(request.url);
@@ -62,6 +63,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   };
 };
 
+/**
+ * Starts enrichment for the selected products, or the 25 least-ready ones if
+ * none are selected.
+ */
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const form = await request.formData();
@@ -84,6 +89,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 };
 
+/**
+ * Catalog audit page: products by readiness with filters and bulk enrichment.
+ */
 export default function Products() {
   const {
     products,
@@ -347,6 +355,7 @@ export default function Products() {
   );
 }
 
+/** Adds the headers Shopify's embedded app boundary needs. */
 export const headers: HeadersFunction = (headersArgs) => {
   return boundary.headers(headersArgs);
 };

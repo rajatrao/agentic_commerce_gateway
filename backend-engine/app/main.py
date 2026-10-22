@@ -30,6 +30,8 @@ ACP, UCP = AcpAdapter(), UcpAdapter()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """Create the shared database, HTTP client, Shopify token provider and background workers for
+    the app's lifetime, and shut them down on exit."""
     settings = get_settings()
     app.state.db = create_database(settings)
     app.state.http_client = httpx.AsyncClient(
@@ -75,6 +77,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 def create_app() -> FastAPI:
+    """Build the FastAPI application: logging, CORS, routers, the MCP mount and error handlers."""
     settings = get_settings()
     configure_logging(settings.log_level, json_logs=settings.is_production)
     app = FastAPI(

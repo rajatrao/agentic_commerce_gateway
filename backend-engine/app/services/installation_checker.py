@@ -44,6 +44,8 @@ METADATA_TAGS = ("og:title", "og:type", "og:image", "og:url", "twitter:card")
 
 
 class Severity(StrEnum):
+    """How serious an installation finding is."""
+
     ERROR = "error"
     WARNING = "warning"
     INFO = "info"
@@ -51,6 +53,9 @@ class Severity(StrEnum):
 
 @dataclass
 class Finding:
+    """One problem or note from an installation check, with the page it was found on and how to fix
+    it."""
+
     code: str
     severity: Severity
     message: str
@@ -58,6 +63,7 @@ class Finding:
     fix: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
+        """Return the finding as a JSON-serializable dict."""
         return {
             "code": self.code,
             "severity": self.severity.value,
@@ -69,6 +75,8 @@ class Finding:
 
 @dataclass
 class PageAnalysis:
+    """What one storefront page exposes: JSON-LD blocks and entities, metadata and app blocks."""
+
     url: str
     jsonld_blocks: int = 0
     jsonld_invalid_blocks: int = 0
@@ -79,11 +87,14 @@ class PageAnalysis:
     findings: list[Finding] = field(default_factory=list)
 
     def entities_of(self, type_name: str) -> list[dict[str, Any]]:
+        """Return the JSON-LD entities of the given schema.org type."""
         return [e for e in self.entities if type_name in _types_of(e)]
 
 
 @dataclass
 class InstallationReport:
+    """Result of a storefront check: reachability, structured data, app block and findings."""
+
     store_url: str
     reachable: bool = False
     password_protected: bool = False
@@ -100,6 +111,8 @@ class InstallationReport:
 
     @property
     def passed(self) -> bool:
+        """Whether the store is reachable and public, has valid Product JSON-LD and the app block,
+        and has no errors."""
         return (
             self.reachable
             and not self.password_protected
@@ -110,6 +123,7 @@ class InstallationReport:
         )
 
     def to_dict(self) -> dict[str, Any]:
+        """Return the report as a JSON-serializable dict."""
         return {
             "store_url": self.store_url,
             "passed": self.passed,
@@ -169,6 +183,7 @@ def _is_present(value: Any) -> bool:
 
 
 def analyze_page(url: str, html: str) -> PageAnalysis:
+    """Parse a page's HTML for JSON-LD, page metadata and the app's block markers."""
     soup = BeautifulSoup(html, "lxml")
     result = PageAnalysis(url=url)
 
@@ -213,6 +228,8 @@ def analyze_page(url: str, html: str) -> PageAnalysis:
 
 
 def validate_product_entities(page: PageAnalysis) -> list[Finding]:
+    """Check a product page's Product JSON-LD for the fields agents need (offers, price,
+    availability, identifiers)."""
     findings: list[Finding] = []
     products = page.entities_of("Product") or page.entities_of("ProductGroup")
     if not products:
@@ -326,6 +343,7 @@ def analyze_robots(robots_txt: str) -> list[str]:
 
 
 def normalise_store_url(raw: str) -> str:
+    """Normalize a store address to `https://<host>`, rejecting other schemes."""
     raw = raw.strip()
     if "://" not in raw:
         raw = "https://" + raw
@@ -349,6 +367,9 @@ async def assert_public_host(hostname: str) -> None:
 
 
 class InstallationChecker:
+    """Fetches a storefront's homepage, a product page, `robots.txt` and `llms.txt` and reports what
+    agents can see."""
+
     def __init__(
         self,
         client: httpx.AsyncClient,
@@ -383,6 +404,7 @@ class InstallationChecker:
         return None
 
     async def check(self, store_url: str, product_url: str | None = None) -> InstallationReport:
+        """Check the store (and optionally a specific product page) and return the report."""
         base = normalise_store_url(store_url)
         host = urlparse(base).hostname or ""
         if self._verify_public_host:

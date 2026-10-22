@@ -38,10 +38,13 @@ def _redact(value: Any) -> Any:
 def redact_processor(
     _logger: Any, _method: str, event_dict: MutableMapping[str, Any]
 ) -> MutableMapping[str, Any]:
+    """structlog processor that masks secrets and tokens in every log event."""
     return _redact(dict(event_dict))  # type: ignore[no-any-return]
 
 
 def configure_logging(level: str = "INFO", json_logs: bool = True) -> None:
+    """Configure stdlib logging and structlog, with JSON output in production and console output
+    otherwise."""
     logging.basicConfig(format="%(message)s", level=level)
     renderer = structlog.processors.JSONRenderer() if json_logs else structlog.dev.ConsoleRenderer()
     structlog.configure(

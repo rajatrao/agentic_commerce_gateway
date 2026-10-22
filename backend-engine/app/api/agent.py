@@ -35,6 +35,7 @@ key_verifier = KeyVerifier()
 
 
 def presented_key(request: Request) -> str | None:
+    """Read the agent API key from `Authorization: Bearer` or `X-API-Key`."""
     auth = request.headers.get("authorization", "")
     if auth.lower().startswith("bearer "):
         return auth.split(" ", 1)[1].strip()
@@ -44,6 +45,8 @@ def presented_key(request: Request) -> str | None:
 async def resolve_agent(
     session: AsyncSession, key: str | None, protocol: AgentProtocol | None, scope: str | None
 ) -> AgentPrincipal:
+    """Authenticate an agent key and check it belongs to `protocol` and holds `scope`, raising
+    `ProtocolError` otherwise."""
     if not key:
         raise ProtocolError(401, "unauthorized", "missing API key")
     principal = await AgentClientRepository(session).authenticate(key, key_verifier)
@@ -59,6 +62,9 @@ async def resolve_agent(
 
 
 class CheckoutHandler:
+    """Per-request helper for checkout routes: loads carts for the calling agent, enforces
+    idempotency and maps errors to protocol responses."""
+
     def __init__(
         self,
         adapter: ProtocolAdapter,
@@ -90,6 +96,7 @@ class CheckoutHandler:
         *,
         any_protocol: bool = False,
     ) -> "CheckoutHandler":
+        """Authenticate the request's agent key for checkout and build a handler for it."""
         principal = await resolve_agent(
             session,
             presented_key(request),
@@ -100,9 +107,11 @@ class CheckoutHandler:
 
     @property
     def merchant_id(self) -> uuid.UUID:
+        """The id of the merchant the agent key belongs to."""
         return self.principal.merchant.id
 
     async def cart(self, cart_id: str) -> AgentCart:
+        """Load one of this merchant's carts by id, or raise a 404 `ProtocolError`."""
         try:
             parsed = uuid.UUID(cart_id)
         except ValueError:
@@ -110,12 +119,15 @@ class CheckoutHandler:
         return await self._cart_call(self.carts.get(self.merchant_id, parsed))
 
     async def body(self) -> Any:
+        """Parse the request body as JSON, or raise a 400 `ProtocolError`."""
         try:
             return await self.request.json()
         except (JSONDecodeError, UnicodeDecodeError):
             raise ProtocolError(400, "invalid", "request body must be JSON") from None
 
     def respond(self, cart: AgentCart, status: int = 200) -> JSONResponse:
+        """Render a cart in the adapter's wire format, echoing the request's idempotency and request
+        ids."""
         return JSONResponse(self.adapter.render(cart), status, headers=self._echo_headers())
 
     async def mutate(
@@ -193,6 +205,7 @@ class CheckoutHandler:
             raise ProtocolError.from_cart_error(exc) from exc
 
     async def cancel(self, cart: AgentCart) -> AgentCart:
+        """Cancel a cart, mapping cart errors to protocol errors."""
         return await self._cart_call(self.carts.cancel(cart))
 
     def _echo_headers(self) -> dict[str, str]:
@@ -206,6 +219,7 @@ class CheckoutHandler:
 def protocol_error_response(
     adapter: ProtocolAdapter, request: Request, exc: ProtocolError
 ) -> JSONResponse:
+    """Render a `ProtocolError` as the adapter's error body with the matching status code."""
     headers = {n: v for n in ("Idempotency-Key", "Request-Id") if (v := request.headers.get(n))}
     if exc.status == 401:
         headers["WWW-Authenticate"] = "Bearer"

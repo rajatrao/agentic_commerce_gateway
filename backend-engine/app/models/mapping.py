@@ -1,3 +1,6 @@
+"""Meta-mapping rules: how merchants map tags, metafields, product types and vendors to product
+properties."""
+
 import uuid
 from enum import StrEnum
 from typing import Any
@@ -10,6 +13,8 @@ from app.models.base import pg_enum
 
 
 class MappingSource(StrEnum):
+    """Where a meta-mapping rule reads its source value from."""
+
     TAG = "tag"
     METAFIELD = "metafield"
     PRODUCT_TYPE = "product_type"

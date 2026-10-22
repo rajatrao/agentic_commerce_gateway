@@ -5,6 +5,10 @@ import { login } from "../../shopify.server";
 
 import styles from "./styles.module.css";
 
+/**
+ * Sends requests that carry a `shop` parameter into the app; otherwise shows
+ * the landing page.
+ */
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const url = new URL(request.url);
 
@@ -15,6 +19,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   return { showForm: Boolean(login) };
 };
 
+/** Public landing page with a shop-domain login form. */
 export default function App() {
   const { showForm } = useLoaderData<typeof loader>();
 

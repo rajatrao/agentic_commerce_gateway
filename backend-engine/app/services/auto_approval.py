@@ -17,6 +17,8 @@ from app.services.catalog_schema import AutoApproval
 
 
 class Candidate(Protocol):
+    """The suggestion fields auto-approval looks at."""
+
     attribute_key: str
     current_value: Any
     proposed_value: Any
@@ -45,6 +47,7 @@ def unmet_conditions(rule: AutoApproval, s: Candidate) -> list[str]:
 
 
 def qualifies(rule: AutoApproval | None, s: Candidate) -> bool:
+    """Whether `rule` is enabled and the suggestion meets all of its conditions."""
     return rule is not None and rule.enabled and not unmet_conditions(rule, s)
 
 

@@ -1,3 +1,5 @@
+"""Meta-mapping rules."""
+
 import uuid
 from collections.abc import Sequence
 
@@ -9,18 +11,22 @@ from app.services.tag_mapper import MappingRule
 
 
 class MappingRuleRepository:
+    """Stores a merchant's meta-mapping rules."""
+
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
     async def list_for(
         self, merchant_id: uuid.UUID, *, active_only: bool = False
     ) -> Sequence[MetaMappingRule]:
+        """Return the merchant's rules in priority order, optionally only active ones."""
         stmt = select(MetaMappingRule).where(MetaMappingRule.merchant_id == merchant_id)
         if active_only:
             stmt = stmt.where(col(MetaMappingRule.active).is_(True))
         return (await self.session.exec(stmt.order_by(col(MetaMappingRule.priority)))).all()
 
     async def domain_rules(self, merchant_id: uuid.UUID) -> list[MappingRule]:
+        """Return the merchant's active rules as `MappingRule` objects for `tag_mapper`."""
         return [
             MappingRule(
                 source_type=r.source_type.value,
@@ -34,16 +40,19 @@ class MappingRuleRepository:
         ]
 
     async def add(self, rule: MetaMappingRule) -> MetaMappingRule:
+        """Persist a rule and return it refreshed."""
         self.session.add(rule)
         await self.session.commit()
         await self.session.refresh(rule)
         return rule
 
     async def get(self, merchant_id: uuid.UUID, rule_id: uuid.UUID) -> MetaMappingRule | None:
+        """Return one of the merchant's rules."""
         rule = await self.session.get(MetaMappingRule, rule_id)
         return rule if rule is not None and rule.merchant_id == merchant_id else None
 
     async def delete(self, merchant_id: uuid.UUID, rule_id: uuid.UUID) -> bool:
+        """Delete one of the merchant's rules. Returns whether it existed."""
         rule = await self.get(merchant_id, rule_id)
         if rule is None:
             return False

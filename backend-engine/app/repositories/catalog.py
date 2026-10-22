@@ -18,8 +18,6 @@ from app.models import (
     RunStatus,
 )
 
-SEVERITY_ORDER = ("critical", "high", "medium", "low")
-
 
 def _current_findings(merchant_id: uuid.UUID, run_id: uuid.UUID | None) -> list[Any]:
     """Findings that describe the catalog now: the latest completed audit's rule findings plus
@@ -33,10 +31,13 @@ def _current_findings(merchant_id: uuid.UUID, run_id: uuid.UUID | None) -> list[
 
 
 class CatalogRepository:
+    """Queries behind the catalog dashboard, product list, findings and change log."""
+
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
     async def latest_completed_run(self, merchant_id: uuid.UUID) -> AuditRun | None:
+        """Return the merchant's most recent completed audit run."""
         return (
             await self.session.exec(
                 select(AuditRun)
@@ -46,6 +47,7 @@ class CatalogRepository:
         ).first()
 
     async def product(self, merchant_id: uuid.UUID, product_gid: str) -> CatalogProduct | None:
+        """Return the merchant's snapshot of one product."""
         return (
             await self.session.exec(
                 select(CatalogProduct).where(
@@ -56,6 +58,7 @@ class CatalogRepository:
         ).first()
 
     async def product_audit(self, run_id: uuid.UUID, product_gid: str) -> ProductAudit | None:
+        """Return one product's scores in a run."""
         return (
             await self.session.exec(
                 select(ProductAudit).where(
@@ -78,6 +81,8 @@ class CatalogRepository:
         limit: int = 50,
         offset: int = 0,
     ) -> tuple[Sequence[CatalogProduct], int, dict[str, dict[str, int]]]:
+        """Page through products with filters, returning the rows, the total and finding counts per
+        product."""
         filters: list[Any] = [
             CatalogProduct.merchant_id == merchant_id,
             col(CatalogProduct.removed_at).is_(None),
@@ -122,6 +127,7 @@ class CatalogRepository:
     async def severity_counts_by_product(
         self, merchant_id: uuid.UUID, run_id: uuid.UUID | None, gids: list[str]
     ) -> dict[str, dict[str, int]]:
+        """Count current findings per severity for each of the given products."""
         if not gids:
             return {}
         rows = (
@@ -149,6 +155,7 @@ class CatalogRepository:
         limit: int = 50,
         offset: int = 0,
     ) -> tuple[Sequence[AuditFinding], int]:
+        """Page through the current findings with optional filters."""
         filters = _current_findings(merchant_id, run_id)
         if product_gid:
             filters.append(AuditFinding.product_gid == product_gid)
@@ -178,6 +185,7 @@ class CatalogRepository:
     async def finding_summary(
         self, merchant_id: uuid.UUID, run_id: uuid.UUID | None
     ) -> dict[str, Any]:
+        """Summarize the current findings by severity and code, plus missing-attribute counts."""
         scope = _current_findings(merchant_id, run_id)
         by_severity = {
             getattr(s, "value", s): int(n)
@@ -221,6 +229,7 @@ class CatalogRepository:
         }
 
     async def trend(self, merchant_id: uuid.UUID, limit: int = 12) -> Sequence[AuditRun]:
+        """Return the merchant's recent completed runs, oldest first, for the score trend."""
         rows = (
             await self.session.exec(
                 select(AuditRun)
@@ -232,6 +241,7 @@ class CatalogRepository:
         return list(reversed(rows))
 
     async def recent_runs(self, merchant_id: uuid.UUID, limit: int = 20) -> Sequence[AuditRun]:
+        """Return the merchant's recent runs, newest first."""
         return (
             await self.session.exec(
                 select(AuditRun)
@@ -250,6 +260,7 @@ class CatalogRepository:
         limit: int = 50,
         offset: int = 0,
     ) -> tuple[Sequence[CatalogChange], int]:
+        """Page through the change log, optionally for one product or some actions."""
         filters: list[Any] = [CatalogChange.merchant_id == merchant_id]
         if product_gid:
             filters.append(CatalogChange.product_gid == product_gid)
@@ -286,10 +297,12 @@ class CatalogRepository:
         return {str(k): int(n) for k, n in rows}
 
     async def change(self, merchant_id: uuid.UUID, change_id: int) -> CatalogChange | None:
+        """Load and lock one of the merchant's change log entries."""
         row = await self.session.get(CatalogChange, change_id, with_for_update=True)
         return row if row is not None and row.merchant_id == merchant_id else None
 
     async def active_product_count(self, merchant_id: uuid.UUID) -> int:
+        """Count the merchant's products that have not been removed."""
         return int(
             (
                 await self.session.exec(
@@ -304,6 +317,7 @@ class CatalogRepository:
         )
 
     async def lowest_readiness_gids(self, merchant_id: uuid.UUID, limit: int) -> list[str]:
+        """Return the ids of the products with the lowest readiness scores."""
         return list(
             (
                 await self.session.exec(

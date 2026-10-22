@@ -59,6 +59,7 @@ async def current_merchant(
     session: SessionDep,
     claims: Annotated[ServiceClaims, Depends(require_service_scopes("merchant:read"))],
 ) -> Merchant:
+    """Resolve the installed merchant for the calling shop, or reject with 403."""
     merchant = await MerchantRepository(session).get_active_by_shop(claims.shop)
     if merchant is None:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "merchant not installed")
@@ -69,10 +70,12 @@ CurrentMerchant = Annotated[Merchant, Depends(current_merchant)]
 
 
 async def get_http_client(request: Request) -> AsyncIterator[httpx.AsyncClient]:
+    """Yield the app's shared `httpx.AsyncClient`."""
     yield request.app.state.http_client
 
 
 def get_token_provider(request: Request) -> ShopifyTokenProvider:
+    """Return the app's shared `ShopifyTokenProvider`."""
     return request.app.state.shopify_tokens  # type: ignore[no-any-return]
 
 

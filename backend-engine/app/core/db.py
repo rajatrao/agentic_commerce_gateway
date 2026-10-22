@@ -26,14 +26,18 @@ def async_url(database_url: str) -> str:
 
 @dataclass(frozen=True)
 class Database:
+    """The async engine and its session factory, created once per app."""
+
     engine: AsyncEngine
     session: async_sessionmaker[AsyncSession]
 
     async def dispose(self) -> None:
+        """Close every pooled connection."""
         await self.engine.dispose()
 
 
 def create_database(settings: Settings) -> Database:
+    """Create the async engine (gateway schema search path, UTC) and its session factory."""
     engine = create_async_engine(
         async_url(settings.database_url),
         pool_size=settings.db_pool_size,
@@ -48,6 +52,7 @@ def create_database(settings: Settings) -> Database:
 
 
 async def get_session(request: Request) -> AsyncIterator[AsyncSession]:
+    """FastAPI dependency that yields one `AsyncSession` per request."""
     db: Database = request.app.state.db
     async with db.session() as session:
         yield session

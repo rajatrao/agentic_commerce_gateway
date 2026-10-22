@@ -31,6 +31,8 @@ STATE_KEY = "acg_agent"
 
 @dataclass(frozen=True)
 class McpAgent:
+    """The authenticated MCP agent behind a request: its client, merchant and scopes."""
+
     client_id: uuid.UUID
     merchant_id: uuid.UUID
     scopes: frozenset[str]
@@ -45,6 +47,7 @@ class AgentKeyAuth:
         self.state = state
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        """Authenticate the request, then pass it to the MCP app or answer 401/403."""
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return

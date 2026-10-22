@@ -8,6 +8,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
+    """Typed application settings read from environment variables and `.env`."""
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     environment: Literal["development", "test", "production"] = "development"
@@ -109,9 +111,11 @@ class Settings(BaseSettings):
 
     @property
     def is_production(self) -> bool:
+        """Whether the app runs with `ENVIRONMENT=production`."""
         return self.environment == "production"
 
 
 @lru_cache
 def get_settings() -> Settings:
+    """Return the process-wide `Settings`, loaded once and cached."""
     return Settings()

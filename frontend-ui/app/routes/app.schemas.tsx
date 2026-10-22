@@ -59,11 +59,13 @@ function readableError(error: unknown) {
   return message;
 }
 
+/** Loads the category schemas in effect for the store. */
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   return { schemas: await backend.schemas(session.shop) };
 };
 
+/** Saves an edited schema (JSON) or resets one to its default. */
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const form = await request.formData();
@@ -93,6 +95,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 };
 
+/**
+ * Category schemas page: view and edit the attributes expected per category.
+ */
 export default function Schemas() {
   const { schemas } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
@@ -265,6 +270,7 @@ export default function Schemas() {
   );
 }
 
+/** Adds the headers Shopify's embedded app boundary needs. */
 export const headers: HeadersFunction = (headersArgs) => {
   return boundary.headers(headersArgs);
 };

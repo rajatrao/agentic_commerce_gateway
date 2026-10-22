@@ -1,3 +1,5 @@
+"""Storefront installation checks and catalog audit runs with their per-product scores."""
+
 import uuid
 from datetime import datetime
 from decimal import Decimal
@@ -12,6 +14,8 @@ from app.models.base import pg_enum, tz_column, utcnow
 
 
 class RunStatus(StrEnum):
+    """Lifecycle of a queued job: queued, running, then completed or failed."""
+
     QUEUED = "queued"
     RUNNING = "running"
     COMPLETED = "completed"
@@ -19,6 +23,8 @@ class RunStatus(StrEnum):
 
 
 class InstallationCheck(SQLModel, table=True):
+    """One storefront installation check: structured data found, app block state and findings."""
+
     __tablename__ = "installation_checks"
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
@@ -75,6 +81,8 @@ class AuditRun(SQLModel, table=True):
 
 
 class ProductAudit(SQLModel, table=True):
+    """One product's AI Discovery Score and readiness score within an audit run."""
+
     __tablename__ = "product_audits"
     __table_args__ = (
         Index(

@@ -29,6 +29,8 @@ OPEN_STATUSES = (SuggestionStatus.PENDING, SuggestionStatus.APPROVED)
 
 
 class EnrichmentRepository(QueueRepository):
+    """The enrichment job queue and the attribute suggestions it produces."""
+
     model = EnrichmentJob
     stale_error = "enrichment worker stopped responding"
 
@@ -37,6 +39,7 @@ class EnrichmentRepository(QueueRepository):
     async def create_job(
         self, merchant_id: uuid.UUID, product_gids: list[str], use_ai: bool
     ) -> EnrichmentJob:
+        """Queue an enrichment job for the given products (duplicates removed)."""
         job = EnrichmentJob(
             merchant_id=merchant_id,
             product_gids=list(dict.fromkeys(product_gids)),
@@ -49,10 +52,12 @@ class EnrichmentRepository(QueueRepository):
         return job
 
     async def get_job(self, merchant_id: uuid.UUID, job_id: uuid.UUID) -> EnrichmentJob | None:
+        """Return one of the merchant's enrichment jobs."""
         job = await self.session.get(EnrichmentJob, job_id)
         return job if job is not None and job.merchant_id == merchant_id else None
 
     async def list_jobs(self, merchant_id: uuid.UUID, limit: int = 20) -> Sequence[EnrichmentJob]:
+        """Return the merchant's recent enrichment jobs, newest first."""
         return (
             await self.session.exec(
                 select(EnrichmentJob)
@@ -63,6 +68,7 @@ class EnrichmentRepository(QueueRepository):
         ).all()
 
     async def active_job_for(self, merchant_id: uuid.UUID) -> EnrichmentJob | None:
+        """Return the merchant's queued or running enrichment job, if any."""
         return (
             await self.session.exec(
                 select(EnrichmentJob).where(
@@ -218,6 +224,7 @@ class EnrichmentRepository(QueueRepository):
         limit: int = 50,
         offset: int = 0,
     ) -> tuple[Sequence[AttributeSuggestion], int]:
+        """Page through suggestions with optional filters."""
         filters: list[Any] = [AttributeSuggestion.merchant_id == merchant_id]
         if ids is not None:
             filters.append(col(AttributeSuggestion.id).in_(ids))
@@ -267,6 +274,7 @@ class EnrichmentRepository(QueueRepository):
         ).all()
 
     async def status_counts(self, merchant_id: uuid.UUID) -> dict[str, int]:
+        """Count the merchant's suggestions per review status."""
         rows = (
             await self.session.exec(
                 select(AttributeSuggestion.status, func.count())
@@ -277,6 +285,7 @@ class EnrichmentRepository(QueueRepository):
         return {str(s.value if hasattr(s, "value") else s): int(n) for s, n in rows}
 
     async def invalid_open_count(self, merchant_id: uuid.UUID) -> int:
+        """Count pending or approved suggestions whose validation is invalid or a warning."""
         return int(
             (
                 await self.session.exec(

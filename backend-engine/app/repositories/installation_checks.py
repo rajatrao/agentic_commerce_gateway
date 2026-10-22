@@ -1,3 +1,5 @@
+"""Storefront installation check reports."""
+
 import uuid
 
 from sqlmodel import col, select
@@ -8,12 +10,15 @@ from app.services.installation_checker import InstallationReport
 
 
 class InstallationCheckRepository:
+    """Stores and reads installation check reports."""
+
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
     async def save_report(
         self, merchant_id: uuid.UUID, report: InstallationReport
     ) -> InstallationCheck:
+        """Store an installation check report for the merchant."""
         data = report.to_dict()
         row = InstallationCheck(
             merchant_id=merchant_id,
@@ -43,6 +48,7 @@ class InstallationCheckRepository:
         return row
 
     async def latest(self, merchant_id: uuid.UUID) -> InstallationCheck | None:
+        """Return the merchant's most recent installation check."""
         return (
             await self.session.exec(
                 select(InstallationCheck)

@@ -15,6 +15,7 @@ function getPool(): pg.Pool {
   return pool;
 }
 
+/** Returns 200 when the database answers, 503 otherwise. */
 export const loader = async () => {
   try {
     await getPool().query("SELECT 1");

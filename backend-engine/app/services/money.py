@@ -1,3 +1,5 @@
+"""Conversion of decimal amounts to the minor-unit integers agent protocols use."""
+
 from decimal import Decimal
 
 # ISO 4217 currencies without minor units. Everything else in Shopify uses two decimals.

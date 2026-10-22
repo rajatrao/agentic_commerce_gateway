@@ -5,6 +5,10 @@ import { AppProvider } from "@shopify/shopify-app-react-router/react";
 
 import { authenticate } from "../shopify.server";
 
+/**
+ * Authenticates the embedded admin request and passes the app's API key to App
+ * Bridge.
+ */
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   await authenticate.admin(request);
 
@@ -12,6 +16,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   return { apiKey: process.env.SHOPIFY_API_KEY || "" };
 };
 
+/** Layout for the embedded admin: App Bridge provider and navigation. */
 export default function App() {
   const { apiKey } = useLoaderData<typeof loader>();
 
@@ -35,11 +40,15 @@ export default function App() {
   );
 }
 
-// Shopify needs React Router to catch some thrown responses, so that their headers are included in the response.
+/**
+ * Shopify needs React Router to catch some thrown responses, so that their
+ * headers are included in the response.
+ */
 export function ErrorBoundary() {
   return boundary.error(useRouteError());
 }
 
+/** Adds the headers Shopify's embedded app boundary needs. */
 export const headers: HeadersFunction = (headersArgs) => {
   return boundary.headers(headersArgs);
 };

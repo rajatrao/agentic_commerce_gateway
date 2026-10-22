@@ -2,6 +2,7 @@
 
 export type Severity = "error" | "warning" | "info";
 
+/** One problem or note from an installation check. */
 export interface Finding {
   code: string;
   severity: Severity;
@@ -10,6 +11,7 @@ export interface Finding {
   fix: string | null;
 }
 
+/** Result of a storefront installation check. */
 export interface InstallationCheck {
   id: string;
   store_url: string;
@@ -31,6 +33,7 @@ export interface InstallationCheck {
   checked_at: string;
 }
 
+/** The merchant record backend-engine returns after an install sync. */
 export interface MerchantSyncResult {
   id: string;
   shop_domain: string;
@@ -38,6 +41,7 @@ export interface MerchantSyncResult {
   installed_at: string;
 }
 
+/** Status and headline numbers of one catalog audit run. */
 export interface AuditRun {
   id: string;
   status: "queued" | "running" | "completed" | "failed";
@@ -47,6 +51,10 @@ export interface AuditRun {
   avg_score: string | null;
 }
 
+/**
+ * The latest audit run plus the latest completed run's AI Discovery Score
+ * summary.
+ */
 export interface AuditSummary {
   run: AuditRun | null;
   completed_run: AuditRun | null;
@@ -58,6 +66,7 @@ export interface AuditSummary {
   top_issues: { code: string; count: number; message: string }[];
 }
 
+/** One product's AI Discovery Score and what it is missing. */
 export interface ProductAudit {
   product_gid: string;
   title: string;
@@ -68,14 +77,17 @@ export interface ProductAudit {
   admin_url: string;
 }
 
+/** A page of product scores from one audit run. */
 export interface ProductAuditPage {
   run_id: string;
   total: number;
   items: ProductAudit[];
 }
 
+/** Agent protocols an API key can be issued for. */
 export type AgentProtocol = "ucp" | "acp" | "mcp";
 
+/** An agent API key as listed to the merchant, identified by its prefix. */
 export interface AgentClient {
   id: string;
   name: string;
@@ -86,6 +98,7 @@ export interface AgentClient {
   revoked_at: string | null;
 }
 
+/** A newly issued agent API key, including the plaintext key. */
 export interface AgentClientCreated extends AgentClient {
   /** Shown once; backend-engine stores only a hash. */
   api_key: string;
@@ -109,6 +122,7 @@ export interface AgentCheckout {
   updated_at: string;
 }
 
+/** A page of agent carts plus how many became Shopify orders. */
 export interface AgentCheckoutPage {
   total: number;
   /** How many agent carts became Shopify orders. */
@@ -118,8 +132,10 @@ export interface AgentCheckoutPage {
 
 // ------------------------------------------------------------------ catalog intelligence
 
+/** Severity of a catalog finding, also used for attribute importance. */
 export type FindingSeverity = "critical" | "high" | "medium" | "low";
 
+/** One audit run as a point in the readiness trend. */
 export interface RunPoint {
   id: string;
   status: AuditRun["status"];
@@ -131,6 +147,7 @@ export interface RunPoint {
   last_error: string | null;
 }
 
+/** An enrichment job's progress and per-product results. */
 export interface EnrichmentJob {
   id: string;
   status: AuditRun["status"];
@@ -155,6 +172,7 @@ export interface EnrichmentJob {
   product_gids?: string[] | null;
 }
 
+/** One entry in the catalog change log. */
 export interface CatalogChange {
   id: number;
   product_gid: string;
@@ -178,6 +196,9 @@ export interface CatalogChange {
   revertible: boolean;
 }
 
+/**
+ * How many products in a schema carry the attributes a shopper question needs.
+ */
 export interface DiscoveryTest {
   schema_key: string;
   schema_name: string;
@@ -212,6 +233,7 @@ export interface PublishOutcome {
   error?: string | null;
 }
 
+/** What publishing does to one product's standard category metafield. */
 export interface CategoryMetafieldItem {
   product_gid: string;
   product_title: string;
@@ -226,6 +248,9 @@ export interface CategoryMetafieldItem {
   error?: string | null;
 }
 
+/**
+ * One shopper question asked of the store's search, with recall and precision.
+ */
 export interface DiscoveryQueryResult {
   schema_key: string;
   schema_name: string;
@@ -243,6 +268,7 @@ export interface DiscoveryQueryResult {
   missed_examples: string[];
 }
 
+/** The `results` of a discovery test run. */
 export interface DiscoveryRunResults {
   method: "storefront_mcp" | "admin_search";
   fallback_reason: string | null;
@@ -252,12 +278,14 @@ export interface DiscoveryRunResults {
   queries: DiscoveryQueryResult[];
 }
 
+/** A schema's opt-in auto-approval rule. */
 export interface AutoApprovalRule {
   enabled: boolean;
   min_confidence: number;
   attributes: string[] | null;
 }
 
+/** A schema's auto-approval rule and what it would approve now. */
 export interface AutoApprovalSchema {
   schema_key: string;
   schema_name: string;
@@ -269,6 +297,7 @@ export interface AutoApprovalSchema {
   auto_approved_total: number;
 }
 
+/** Auto-approval rules per schema and their recent approvals. */
 export interface AutoApprovalReport {
   schemas: AutoApprovalSchema[];
   recent: CatalogChange[];
@@ -276,6 +305,7 @@ export interface AutoApprovalReport {
   statuses: Record<string, string>;
 }
 
+/** Dashboard numbers for catalog readiness. */
 export interface CatalogOverview {
   has_audit: boolean;
   products_analyzed: number;
@@ -299,6 +329,7 @@ export interface CatalogOverview {
   publish_job: CatalogJob | null;
 }
 
+/** An audited product's identity, scores and finding counts. */
 export interface CatalogProduct {
   product_gid: string;
   title: string;
@@ -314,11 +345,13 @@ export interface CatalogProduct {
   synced_at: string;
 }
 
+/** A page of results and the total count. */
 export interface Page<T> {
   total: number;
   items: T[];
 }
 
+/** One catalog finding on a product. */
 export interface CatalogFinding {
   id: number;
   product_gid: string;
@@ -335,6 +368,7 @@ export interface CatalogFinding {
   created_at: string;
 }
 
+/** Review state of an attribute suggestion. */
 export type SuggestionStatus =
   | "pending"
   | "approved"
@@ -344,6 +378,9 @@ export type SuggestionStatus =
   | "failed"
   | "reverted";
 
+/**
+ * An attribute value suggested for a product, with its evidence and validation.
+ */
 export interface Suggestion {
   id: string;
   product_gid: string;
@@ -373,6 +410,7 @@ export interface Suggestion {
   published_at: string | null;
 }
 
+/** One schema attribute on a product and its current value. */
 export interface AttributeRow {
   key: string;
   label: string;
@@ -387,6 +425,7 @@ export interface AttributeRow {
   metafield: string | null;
 }
 
+/** One component of a product's readiness score. */
 export interface ReadinessComponent {
   weight: number;
   value: number | null;
@@ -394,6 +433,7 @@ export interface ReadinessComponent {
   points: number | null;
 }
 
+/** Everything the product page shows. */
 export interface ProductDetail {
   product: CatalogProduct;
   schema_name: string | null;
@@ -404,18 +444,21 @@ export interface ProductDetail {
   changes: CatalogChange[];
 }
 
+/** One review decision on a suggestion. */
 export interface ReviewAction {
   id: string;
   action: "approve" | "edit" | "reject" | "reopen";
   value?: unknown;
 }
 
+/** Per-suggestion results of a batch of review actions. */
 export interface ReviewResult {
   results: { id: string; ok: boolean; error?: string; status?: string }[];
   succeeded: number;
   failed: number;
 }
 
+/** What publishing one suggestion would write to its metafield. */
 export interface PublishPreviewItem {
   suggestion_id: string;
   product_gid: string;
@@ -431,6 +474,7 @@ export interface PublishPreviewItem {
   creates_definition?: boolean;
 }
 
+/** What publishing the approved suggestions would write to Shopify. */
 export interface PublishPreview {
   items: PublishPreviewItem[];
   category_metafields: CategoryMetafieldItem[];
@@ -439,6 +483,7 @@ export interface PublishPreview {
   blocked: number;
 }
 
+/** One attribute a category schema expects. */
 export interface AttributeDefinition {
   key: string;
   label: string;
@@ -454,6 +499,10 @@ export interface AttributeDefinition {
   taxonomy_attribute?: string | null;
 }
 
+/**
+ * The attributes, variant options and shopper questions expected for a
+ * category.
+ */
 export interface CategorySchema {
   key: string;
   name: string;
@@ -466,6 +515,7 @@ export interface CategorySchema {
   auto_approve?: AutoApprovalRule;
 }
 
+/** A category schema in effect for the store. */
 export interface SchemaEntry {
   key: string;
   customized: boolean;
@@ -473,6 +523,10 @@ export interface SchemaEntry {
   definition: CategorySchema;
 }
 
+/**
+ * Where an attribute is written in Shopify, and whether that matches the
+ * store's definitions.
+ */
 export interface MetafieldMappingEntry {
   attribute_key: string;
   labels: string[];
@@ -487,6 +541,7 @@ export interface MetafieldMappingEntry {
   status: "ok" | "will_create" | "conflict" | "unknown";
 }
 
+/** The store's catalog settings and the defaults they override. */
 export interface CatalogSettings {
   readiness_weights: Record<string, number>;
   default_weights: Record<string, number>;
@@ -498,8 +553,10 @@ export interface CatalogSettings {
   auto_publish_note: string;
 }
 
+/** Where a meta-mapping rule reads its source value from. */
 export type MappingSourceType = "tag" | "metafield" | "product_type" | "vendor";
 
+/** A meta-mapping rule as created or edited. */
 export interface MappingRuleInput {
   source_type: MappingSourceType;
   source_key: string;
@@ -510,10 +567,12 @@ export interface MappingRuleInput {
   active: boolean;
 }
 
+/** A stored meta-mapping rule. */
 export interface MappingRule extends MappingRuleInput {
   id: string;
 }
 
+/** What a meta-mapping rule would do against the current catalog. */
 export interface MappingPreview {
   products_scanned: number;
   matched: number;

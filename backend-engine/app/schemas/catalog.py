@@ -1,3 +1,5 @@
+"""Request and response models for the catalog intelligence routes."""
+
 import uuid
 from datetime import datetime
 from decimal import Decimal
@@ -9,6 +11,8 @@ from app.services.catalog_schema import AutoApproval, CategorySchema
 
 
 class RunPoint(BaseModel):
+    """Status and averages of one catalog audit run."""
+
     id: uuid.UUID
     status: str
     started_at: datetime
@@ -20,6 +24,8 @@ class RunPoint(BaseModel):
 
 
 class JobOut(BaseModel):
+    """Progress of an enrichment job, with per-product results when requested."""
+
     id: uuid.UUID
     status: str
     use_ai: bool
@@ -52,6 +58,8 @@ class CatalogJobOut(BaseModel):
 
 
 class ChangeOut(BaseModel):
+    """One entry in the catalog change log (suggestion, review, publish or revert)."""
+
     id: int
     product_gid: str
     product_title: str
@@ -67,6 +75,8 @@ class ChangeOut(BaseModel):
 
 
 class ChangePage(BaseModel):
+    """A page of the catalog change log."""
+
     total: int
     items: list[ChangeOut]
 
@@ -97,6 +107,8 @@ class OverviewOut(BaseModel):
 
 
 class CatalogProductOut(BaseModel):
+    """A product's identity, readiness score and finding counts."""
+
     product_gid: str
     title: str
     status: str
@@ -112,11 +124,15 @@ class CatalogProductOut(BaseModel):
 
 
 class CatalogProductPage(BaseModel):
+    """A page of audited products."""
+
     total: int
     items: list[CatalogProductOut]
 
 
 class FindingOut(BaseModel):
+    """One catalog finding on a product."""
+
     id: int
     product_gid: str
     product_title: str
@@ -133,11 +149,15 @@ class FindingOut(BaseModel):
 
 
 class FindingPage(BaseModel):
+    """A page of catalog findings."""
+
     total: int
     items: list[FindingOut]
 
 
 class SuggestionOut(BaseModel):
+    """An attribute value suggested for a product, with its evidence and validation."""
+
     id: uuid.UUID
     product_gid: str
     product_title: str
@@ -167,11 +187,15 @@ class SuggestionOut(BaseModel):
 
 
 class SuggestionPage(BaseModel):
+    """A page of the review queue."""
+
     total: int
     items: list[SuggestionOut]
 
 
 class AttributeRow(BaseModel):
+    """One schema attribute on a product: its current value, state and pending suggestion."""
+
     key: str
     label: str
     type: str
@@ -186,6 +210,8 @@ class AttributeRow(BaseModel):
 
 
 class ProductDetailOut(BaseModel):
+    """What the product page shows: readiness, attributes, findings, suggestions and history."""
+
     product: CatalogProductOut
     schema_name: str | None
     readiness_breakdown: dict[str, Any]
@@ -196,6 +222,8 @@ class ProductDetailOut(BaseModel):
 
 
 class EnrichmentRequest(BaseModel):
+    """Which products to enrich, and whether to use the AI provider."""
+
     product_gids: list[str] = Field(default_factory=list, max_length=1000)
     # Alternative to explicit ids: the N products with the lowest readiness score.
     lowest_readiness: int | None = Field(default=None, ge=1, le=1000)
@@ -203,22 +231,30 @@ class EnrichmentRequest(BaseModel):
 
 
 class ReviewItem(BaseModel):
+    """One review action on a suggestion."""
+
     id: uuid.UUID
     action: Literal["approve", "edit", "reject", "reopen"]
     value: Any = None
 
 
 class ReviewRequest(BaseModel):
+    """A batch of review actions."""
+
     actions: list[ReviewItem] = Field(min_length=1, max_length=500)
 
 
 class PublishRequest(BaseModel):
     # None: every approved suggestion (up to PUBLISH_MAX_SUGGESTIONS).
+    """Which approved suggestions to write to Shopify. `confirm` must be true to start the job."""
+
     suggestion_ids: list[uuid.UUID] | None = Field(default=None, max_length=5000)
     confirm: bool = False
 
 
 class AutoApprovalSchemaOut(BaseModel):
+    """A schema's auto-approval rule and the attributes it can approve."""
+
     schema_key: str
     schema_name: str
     rule: AutoApproval
@@ -230,6 +266,8 @@ class AutoApprovalSchemaOut(BaseModel):
 
 
 class AutoApprovalReport(BaseModel):
+    """Auto-approval rules per schema and the suggestions they recently approved."""
+
     schemas: list[AutoApprovalSchemaOut]
     recent: list[ChangeOut]
     # Current status of each suggestion in `recent`, by suggestion id.
@@ -237,6 +275,8 @@ class AutoApprovalReport(BaseModel):
 
 
 class SchemaOut(BaseModel):
+    """A category schema in effect for the merchant."""
+
     key: str
     customized: bool
     builtin: bool
@@ -244,6 +284,8 @@ class SchemaOut(BaseModel):
 
 
 class MappingOut(BaseModel):
+    """Where an attribute is written in Shopify (metafield namespace, key and type)."""
+
     attribute_key: str
     labels: list[str]
     attribute_type: str
@@ -258,6 +300,8 @@ class MappingOut(BaseModel):
 
 
 class MappingIn(BaseModel):
+    """Change where an attribute is written in Shopify."""
+
     namespace: str = Field(pattern=r"^[a-zA-Z0-9_-]{2,255}$")
     key: str = Field(pattern=r"^[a-zA-Z0-9_-]{2,64}$")
     type: str
@@ -265,6 +309,8 @@ class MappingIn(BaseModel):
 
 
 class CatalogSettingsOut(BaseModel):
+    """The merchant's catalog settings and the defaults they override."""
+
     readiness_weights: dict[str, int]
     default_weights: dict[str, int]
     ready_threshold: int
@@ -276,5 +322,7 @@ class CatalogSettingsOut(BaseModel):
 
 
 class CatalogSettingsIn(BaseModel):
+    """Update the readiness weights and the ready threshold."""
+
     readiness_weights: dict[str, int]
     ready_threshold: int = Field(ge=1, le=100)

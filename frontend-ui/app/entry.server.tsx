@@ -6,8 +6,13 @@ import { type EntryContext } from "react-router";
 import { isbot } from "isbot";
 import { addDocumentResponseHeaders } from "./shopify.server";
 
+/** How long (ms) to wait for the React stream before aborting the render. */
 export const streamTimeout = 5000;
 
+/**
+ * Renders a document request as a streamed React response, waiting for the full
+ * page for bots.
+ */
 export default async function handleRequest(
   request: Request,
   responseStatusCode: number,

@@ -66,6 +66,8 @@ each where possible. Return an empty list when there are none."""
 
 
 class AIAttribute(BaseModel):
+    """One attribute the model read from the product text, with its evidence and confidence."""
+
     key: str
     status: Literal["stated", "unknown"]
     value: str | None
@@ -76,6 +78,8 @@ class AIAttribute(BaseModel):
 
 
 class AIIssue(BaseModel):
+    """A content problem the model found, such as a contradiction or an unsupported claim."""
+
     kind: Literal["contradiction", "ambiguity", "unsupported_claim", "missing_detail"]
     attribute_key: str | None
     severity: Literal["high", "medium", "low"]
@@ -85,6 +89,8 @@ class AIIssue(BaseModel):
 
 
 class AIEnrichment(BaseModel):
+    """The model's structured answer: attributes and issues."""
+
     attributes: list[AIAttribute]
     issues: list[AIIssue]
 
@@ -94,6 +100,8 @@ class AIEnrichmentError(Exception):
 
 
 class Enricher(Protocol):
+    """An AI provider that reads a product's text against its category schema."""
+
     provider: str
     model: str
 
@@ -102,14 +110,19 @@ class Enricher(Protocol):
         sources: list[TextSource],
         metafields: list[dict[str, Any]],
         schema: CategorySchema,
-    ) -> AIEnrichment: ...
+    ) -> AIEnrichment:
+        """Extract the schema's attributes and content issues from the product's text and
+        metafields."""
 
-    async def aclose(self) -> None: ...
+    async def aclose(self) -> None:
+        """Release the provider's HTTP resources."""
 
 
 def build_user_message(
     sources: list[TextSource], metafields: list[dict[str, Any]], schema: CategorySchema
 ) -> str:
+    """Build the prompt's user message: the product's text, metafields and the attributes to look
+    for, as JSON."""
     product: dict[str, Any] = {s.name: s.text[:MAX_SOURCE_CHARS] for s in sources if s.text}
     if metafields:
         product["metafields"] = [
@@ -153,6 +166,8 @@ def _parse(content: str | None) -> AIEnrichment:
 
 
 class ClaudeEnricher:
+    """Enricher backed by Claude through the Anthropic API, using structured outputs."""
+
     provider = "anthropic"
 
     def __init__(self, settings: Settings, client: Any | None = None) -> None:
@@ -171,6 +186,8 @@ class ClaudeEnricher:
         metafields: list[dict[str, Any]],
         schema: CategorySchema,
     ) -> AIEnrichment:
+        """Ask Claude for the product's attributes and issues, raising `AIEnrichmentError` on
+        failure."""
         anthropic = self._anthropic
         try:
             response = await self._client.messages.parse(
@@ -197,6 +214,7 @@ class ClaudeEnricher:
         return parsed
 
     async def aclose(self) -> None:
+        """Close the Anthropic client."""
         await self._client.close()
 
 
@@ -261,6 +279,7 @@ class OllamaEnricher(_HttpEnricher):
         metafields: list[dict[str, Any]],
         schema: CategorySchema,
     ) -> AIEnrichment:
+        """Ask the Ollama model for the product's attributes and issues."""
         data = await self._post(
             "/api/chat",
             {
@@ -288,6 +307,7 @@ class OpenAICompatibleEnricher(_HttpEnricher):
         metafields: list[dict[str, Any]],
         schema: CategorySchema,
     ) -> AIEnrichment:
+        """Ask the model for the product's attributes and issues."""
         data = await self._post(
             "/chat/completions",
             {
@@ -313,6 +333,8 @@ class OpenAICompatibleEnricher(_HttpEnricher):
 
 
 def resolve_provider(settings: Settings) -> str:
+    """Return the configured AI provider, defaulting to Anthropic when an API key is set and `none`
+    otherwise."""
     if settings.ai_provider:
         return settings.ai_provider
     return "anthropic" if settings.anthropic_api_key else "none"

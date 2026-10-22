@@ -84,6 +84,8 @@ SPACE_BEFORE_PUNCT_RE = re.compile(r"\s+([.,;:!?])")
 
 @dataclass
 class ProductScore:
+    """One product's AI Discovery Score, its per-dimension breakdown and what it is missing."""
+
     product_gid: str
     title: str
     score: int
@@ -97,12 +99,14 @@ class ProductScore:
 
 
 def plain_text(description: str | None, description_html: str | None = None) -> str:
+    """Return a product description as plain text, stripping HTML when only HTML is given."""
     text = description or TAG_RE.sub(" ", description_html or "")
     text = WS_RE.sub(" ", html.unescape(text)).strip()
     return SPACE_BEFORE_PUNCT_RE.sub(r"\1", text)
 
 
 def is_valid_gtin(code: str | None) -> bool:
+    """Whether `code` is a GTIN-8, -12, -13 or -14 with a correct check digit."""
     if not code:
         return False
     digits = code.strip().replace(" ", "").replace("-", "")
@@ -121,12 +125,15 @@ def _nodes(product: dict[str, Any], key: str) -> list[dict[str, Any]]:
 
 
 def content_hash(product: dict[str, Any], mapped: dict[str, str]) -> str:
+    """Hash the product's content and mapped attributes, ignoring `updatedAt`, to detect real
+    changes."""
     payload = {k: v for k, v in product.items() if k != "updatedAt"}
     raw = json.dumps([payload, mapped], sort_keys=True, default=str).encode()
     return hashlib.sha256(raw).hexdigest()
 
 
 def score_product(product: dict[str, Any], rules: list[MappingRule] | None = None) -> ProductScore:
+    """Score one Shopify product across the eight discovery dimensions."""
     mapped = apply_rules(product, rules or [])
     missing: list[str] = []
     points: dict[str, int] = {}
@@ -302,6 +309,8 @@ def _positive(value: Any) -> bool:
 
 @dataclass
 class CatalogSummary:
+    """Run-level results: product count, averages, grade counts and the most common issues."""
+
     products_scanned: int
     avg_score: Decimal | None
     grade_counts: dict[str, int]
@@ -310,6 +319,7 @@ class CatalogSummary:
 
 
 def grade(score: int) -> str:
+    """Map a score to its grade: excellent, good, needs_work or poor."""
     if score >= 85:
         return "excellent"
     if score >= 70:
@@ -320,6 +330,7 @@ def grade(score: int) -> str:
 
 
 def summarize(scores: list[ProductScore]) -> CatalogSummary:
+    """Aggregate product scores into a `CatalogSummary`."""
     if not scores:
         return CatalogSummary(0, None, {}, [])
     avg = (Decimal(sum(s.score for s in scores)) / len(scores)).quantize(
@@ -354,6 +365,8 @@ class CatalogAuditor:
         products: AsyncIterable[dict[str, Any]],
         sink: Callable[[list[ProductScore]], Awaitable[None] | None],
     ) -> CatalogSummary:
+        """Score every product from `products`, passing batches to `sink`, and return the run
+        summary."""
         batch: list[ProductScore] = []
         all_scores: list[ProductScore] = []
         async for product in products:

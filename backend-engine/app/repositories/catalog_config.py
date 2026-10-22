@@ -17,6 +17,9 @@ from app.services.readiness import READY_THRESHOLD, normalize_weights
 
 @dataclass(frozen=True)
 class MappingTarget:
+    """The metafield an attribute is written to, and whether that comes from the schema or the
+    merchant."""
+
     attribute_key: str
     namespace: str
     key: str
@@ -27,16 +30,21 @@ class MappingTarget:
 
 @dataclass
 class CatalogConfig:
+    """A merchant's effective catalog configuration: schemas, metafield mappings and readiness
+    settings."""
+
     schemas: dict[str, CategorySchema]
     mappings: dict[str, MappingTarget]
     weights: dict[str, int]
     ready_threshold: int
 
     def mapping_keys(self) -> dict[str, tuple[str, str]]:
+        """Return each attribute's metafield (namespace, key)."""
         return {k: (m.namespace, m.key) for k, m in self.mappings.items()}
 
 
 def catalog_settings(merchant: Merchant) -> dict[str, Any]:
+    """Return the merchant's readiness weights and ready threshold, with defaults filled in."""
     raw = merchant.settings.get("catalog") or {}
     return {
         "readiness_weights": normalize_weights(raw.get("readiness_weights")),
@@ -45,10 +53,13 @@ def catalog_settings(merchant: Merchant) -> dict[str, Any]:
 
 
 class CatalogConfigRepository:
+    """Loads and saves a merchant's schema overrides, metafield mappings and catalog settings."""
+
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
     async def overrides(self, merchant_id: uuid.UUID) -> Sequence[CategorySchemaOverride]:
+        """Return the merchant's custom schema definitions."""
         return (
             await self.session.exec(
                 select(CategorySchemaOverride).where(
@@ -58,9 +69,11 @@ class CatalogConfigRepository:
         ).all()
 
     async def schemas(self, merchant_id: uuid.UUID) -> dict[str, CategorySchema]:
+        """Return the built-in schemas merged with the merchant's overrides."""
         return merge_schemas({o.key: o.definition for o in await self.overrides(merchant_id)})
 
     async def save_schema(self, merchant_id: uuid.UUID, schema: CategorySchema) -> None:
+        """Create or replace the merchant's override of a schema."""
         row = (
             await self.session.exec(
                 select(CategorySchemaOverride).where(
@@ -81,6 +94,7 @@ class CatalogConfigRepository:
         await self.session.commit()
 
     async def reset_schema(self, merchant_id: uuid.UUID, key: str) -> bool:
+        """Delete the merchant's override of a schema. Returns whether one existed."""
         result = await self.session.exec(
             delete(CategorySchemaOverride).where(
                 col(CategorySchemaOverride.merchant_id) == merchant_id,
@@ -127,6 +141,7 @@ class CatalogConfigRepository:
         type_: str,
         enabled: bool,
     ) -> None:
+        """Create or replace the merchant's metafield mapping for an attribute."""
         row = (
             await self.session.exec(
                 select(MetafieldMapping).where(
@@ -143,6 +158,7 @@ class CatalogConfigRepository:
         await self.session.commit()
 
     async def load(self, merchant: Merchant) -> CatalogConfig:
+        """Load the merchant's full effective catalog configuration."""
         schemas = await self.schemas(merchant.id)
         settings = catalog_settings(merchant)
         return CatalogConfig(
@@ -153,6 +169,7 @@ class CatalogConfigRepository:
         )
 
     async def save_settings(self, merchant: Merchant, values: dict[str, Any]) -> None:
+        """Save the merchant's catalog settings."""
         merchant.settings = {**merchant.settings, "catalog": values}
         flag_modified(merchant, "settings")
         self.session.add(merchant)

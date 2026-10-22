@@ -42,6 +42,9 @@ class _CachedToken:
 
 
 class ShopifyTokenProvider:
+    """Supplies each shop's Admin API token: fetched from frontend-ui (which owns token refresh),
+    falling back to the stored encrypted copy, and cached per shop."""
+
     def __init__(self, http: httpx.AsyncClient, settings: Settings) -> None:
         self._http = http
         self._settings = settings
@@ -49,9 +52,12 @@ class ShopifyTokenProvider:
         self._locks: dict[str, asyncio.Lock] = {}
 
     def invalidate(self, shop: str) -> None:
+        """Forget the cached token for a shop, so the next call fetches it again."""
         self._cache.pop(shop, None)
 
     async def get(self, shop: str, stored_token_enc: bytes | None = None) -> str:
+        """Return a usable Admin API token for the shop, fetching one if the cached token is due for
+        refresh."""
         cached = self._cache.get(shop)
         now = datetime.now(UTC)
         if cached and cached.refresh_after > now:
@@ -126,13 +132,13 @@ class ShopifyAdminClient:
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ) -> None:
         self._http = http
-        self._shop = shop
         self._token_getter = token_getter
         self._url = f"https://{shop}/admin/api/{api_version}/graphql.json"
         self._on_unauthorized = on_unauthorized
         self._sleep = sleep
 
     async def query(self, query: str, variables: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Run a GraphQL query and return its `data`, retrying throttling and server errors."""
         last_error = "unknown"
         for attempt in range(1, self.MAX_ATTEMPTS + 1):
             token = await self._token_getter()

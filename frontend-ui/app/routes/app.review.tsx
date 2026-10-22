@@ -36,6 +36,10 @@ const TABS: { status: SuggestionStatus; label: string }[] = [
   { status: "rejected", label: "Rejected" },
 ];
 
+/**
+ * Loads a filtered page of the review queue, status counts and the latest
+ * publish job.
+ */
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const url = new URL(request.url);
@@ -80,6 +84,10 @@ type ActionData = {
   job?: CatalogJob;
 };
 
+/**
+ * Previews or starts publishing approved values, or applies review actions,
+ * depending on `intent`.
+ */
 export const action = async ({
   request,
 }: ActionFunctionArgs): Promise<ActionData> => {
@@ -203,6 +211,10 @@ function PublishJobBanner({ job }: { job: CatalogJob }) {
   );
 }
 
+/**
+ * Review queue page: approve, edit or reject suggestions and publish approved
+ * values to Shopify.
+ */
 export default function ReviewQueue() {
   const { suggestions, counts, status, product, validation, page, publishJob } =
     useLoaderData<typeof loader>();
@@ -582,6 +594,7 @@ export default function ReviewQueue() {
   );
 }
 
+/** Adds the headers Shopify's embedded app boundary needs. */
 export const headers: HeadersFunction = (headersArgs) => {
   return boundary.headers(headersArgs);
 };

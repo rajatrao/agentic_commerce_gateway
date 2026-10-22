@@ -5,6 +5,7 @@ interface LoginErrorMessage {
   shop?: string;
 }
 
+/** Turns Shopify login errors into messages for the shop-domain field. */
 export function loginErrorMessage(loginErrors: LoginError): LoginErrorMessage {
   if (loginErrors?.shop === LoginErrorType.MissingShop) {
     return { shop: "Please enter your shop domain to log in" };

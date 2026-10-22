@@ -1,3 +1,5 @@
+"""Catalog audit runs: the audit job queue, per-product scores and dashboard aggregates."""
+
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -52,6 +54,7 @@ async def upsert_snapshots(
 
 
 def product_audit_row(run_id: uuid.UUID, merchant_id: uuid.UUID, s: ProductScore) -> ProductAudit:
+    """Build the `ProductAudit` row for one scored product."""
     return ProductAudit(
         run_id=run_id,
         merchant_id=merchant_id,
@@ -68,6 +71,7 @@ def product_audit_row(run_id: uuid.UUID, merchant_id: uuid.UUID, s: ProductScore
 
 
 def finding_rows(run_id: uuid.UUID, merchant_id: uuid.UUID, s: ProductScore) -> list[AuditFinding]:
+    """Build the `AuditFinding` rows for one product's readiness findings."""
     if s.readiness is None:
         return []
     return [
@@ -104,6 +108,8 @@ class ClaimedRun:
 
 
 class AuditRepository:
+    """Queue, record and summarize catalog audit runs."""
+
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
@@ -119,14 +125,12 @@ class AuditRepository:
         ).first()
 
     async def create_run(self, merchant_id: uuid.UUID) -> AuditRun:
+        """Queue a new audit run for the merchant."""
         run = AuditRun(merchant_id=merchant_id, status=RunStatus.QUEUED)
         self.session.add(run)
         await self.session.commit()
         await self.session.refresh(run)
         return run
-
-    async def get_run(self, run_id: uuid.UUID) -> AuditRun | None:
-        return await self.session.get(AuditRun, run_id)
 
     # ------------------------------------------------------------------ job queue
 
@@ -180,9 +184,13 @@ class AuditRepository:
             return ClaimedRun(run.id, run.merchant_id, run.attempts)
 
     async def heartbeat(self, claim: ClaimedRun) -> bool:
+        """Record that the claimed run is still being worked on. Returns False if the claim was
+        lost."""
         return await self._fenced(claim, heartbeat_at=utcnow())
 
     async def add_scores(self, claim: ClaimedRun, scores: list[ProductScore]) -> None:
+        """Store a batch of product scores and findings, refresh product snapshots and advance the
+        run's progress."""
         self.session.add_all(product_audit_row(claim.id, claim.merchant_id, s) for s in scores)
         self.session.add_all(
             f for s in scores for f in finding_rows(claim.id, claim.merchant_id, s)
@@ -204,6 +212,7 @@ class AuditRepository:
         avg_readiness: Decimal | None = None,
         stats: dict[str, Any] | None = None,
     ) -> None:
+        """Mark the claimed run completed with its averages and stats."""
         run = await self.session.get(AuditRun, claim.id)
         started_at = run.started_at if run else utcnow()
         done = await self._fenced(
@@ -290,12 +299,14 @@ class AuditRepository:
     async def latest_run(
         self, merchant_id: uuid.UUID, *, completed_only: bool = False
     ) -> AuditRun | None:
+        """Return the merchant's most recent run, optionally only completed ones."""
         stmt = select(AuditRun).where(AuditRun.merchant_id == merchant_id)
         if completed_only:
             stmt = stmt.where(AuditRun.status == RunStatus.COMPLETED)
         return (await self.session.exec(stmt.order_by(col(AuditRun.started_at).desc()))).first()
 
     async def grade_counts(self, run_id: uuid.UUID) -> dict[str, int]:
+        """Count a run's products per score grade (excellent, good, needs_work, poor)."""
         rows = (
             await self.session.execute(
                 text(
@@ -314,6 +325,7 @@ class AuditRepository:
         return {str(g): int(c) for g, c in rows}
 
     async def top_issues(self, run_id: uuid.UUID, limit: int = 10) -> list[tuple[str, int]]:
+        """Return the most common missing fields in a run, with product counts."""
         rows = (
             await self.session.execute(
                 text(
@@ -330,6 +342,7 @@ class AuditRepository:
         return [(str(i), int(n)) for i, n in rows]
 
     async def dimension_averages(self, run_id: uuid.UUID) -> dict[str, dict[str, float]]:
+        """Average each score dimension's points across a run's products."""
         rows = (
             await self.session.execute(
                 text(
@@ -355,6 +368,7 @@ class AuditRepository:
         limit: int = 50,
         offset: int = 0,
     ) -> tuple[Sequence[ProductAudit], int]:
+        """Page through a run's product scores, filtered by maximum score or missing field."""
         filters: list[Any] = [ProductAudit.run_id == run_id, ProductAudit.score <= max_score]
         if issue:
             missing = ProductAudit.__table__.c.missing_fields  # type: ignore[attr-defined]

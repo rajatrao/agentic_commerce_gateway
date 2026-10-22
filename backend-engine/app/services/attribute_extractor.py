@@ -41,23 +41,30 @@ NEGATION_RE = re.compile(r"\b(no|not|without|lacks?|isn't|doesn't|does not)\b", 
 
 @dataclass
 class TextSource:
+    """A named piece of product text (title, description, tags or options)."""
+
     name: str  # title | description | tags | options
     text: str
 
 
 @dataclass
 class CurrentValue:
+    """An attribute's current structured value, where it came from and any validation errors."""
+
     value: Any
     raw: Any
     source: str
     errors: list[str] = field(default_factory=list)
 
     def as_json(self) -> dict[str, Any]:
+        """Return the value as a JSON-serializable dict."""
         return {"value": self.value, "raw": self.raw, "source": self.source, "errors": self.errors}
 
 
 @dataclass
 class Extraction:
+    """A value found in the product text, with the sentence that states it."""
+
     value: Any
     evidence: str
     source: str
@@ -66,6 +73,7 @@ class Extraction:
 
 
 def text_sources(product: dict[str, Any]) -> list[TextSource]:
+    """Collect the product's title, description, tags and options as text sources."""
     options = "; ".join(
         f"{o.get('name')}: {', '.join(str(v) for v in o.get('values') or [])}"
         for o in product.get("options") or []
@@ -161,6 +169,7 @@ def _alias_hit(attr: AttributeDefinition, sentence: str) -> bool:
 
 
 def extract_from_text(attr: AttributeDefinition, sources: list[TextSource]) -> Extraction | None:
+    """Find the attribute's value stated in the product text with deterministic rules, or None."""
     sentences = _sentences(sources)
     if attr.type in MEASUREMENT_TYPES:
         return _extract_measurement(attr, sentences)

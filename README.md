@@ -1,208 +1,334 @@
+<div align="center">
+
 # Agentic Commerce Gateway
 
-A Shopify app that makes a merchant's catalog discoverable and purchasable by AI shopping agents.
+**A production-grade Shopify app that makes a merchant's catalog discoverable, understandable and purchasable by AI shopping agents.**
 
-| Path | Stack | Role |
+[![CI](https://github.com/rajatrao/agentic_commerce_gateway/actions/workflows/ci.yml/badge.svg)](https://github.com/rajatrao/agentic_commerce_gateway/actions/workflows/ci.yml)
+![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-async-009688?logo=fastapi&logoColor=white)
+![React Router 7](https://img.shields.io/badge/React_Router-7-CA4245?logo=reactrouter&logoColor=white)
+![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)
+![Postgres 16](https://img.shields.io/badge/Postgres-16-4169E1?logo=postgresql&logoColor=white)
+![Shopify](https://img.shields.io/badge/Shopify-Admin_GraphQL-7AB55C?logo=shopify&logoColor=white)
+
+[Architecture](#architecture) · [Engineering highlights](#engineering-highlights) · [Design decisions](#key-design-decisions) · [Features](#what-it-does) · [Run it locally](#run-it-locally) · [Deep-dive docs](#documentation)
+
+</div>
+
+---
+
+## Why this exists
+
+Shoppers increasingly ask ChatGPT, Gemini, Claude and custom agents to find and buy products for them. Those agents can only recommend what they can **read** and only buy through what they can **call**. Most Shopify catalogs fail on both counts: key facts (capacity, weight, material, waterproofing) are buried in prose or missing entirely, and there is no machine interface for building a cart.
+
+This gateway closes both gaps for a merchant, end to end:
+
+1. **Get found.** Audit every product against what agents need for its category, extract missing attributes from the product's own content with evidence, let the merchant review them, and write approved values back to Shopify as typed metafields. Publish the catalog as storefront JSON-LD, a streaming `llm.txt` feed and a UCP discovery profile.
+2. **Get bought.** Expose the catalog to approved agents through **three agent commerce protocols (ACP, UCP and MCP)** backed by one protocol-neutral cart engine with live stock and real shipping and tax. Hand the shopper to the merchant's **own Shopify checkout**, so the app never touches payment.
+
+## At a glance
+
+| | |
+|---|---|
+| **Scope** | Two services, one Postgres database, a Shopify theme extension, 12 embedded admin pages |
+| **Code** | ~21k lines of Python, ~7k lines of TypeScript |
+| **Agent protocols** | OpenAI's Agentic Commerce Protocol (ACP), Universal Commerce Protocol (UCP), Model Context Protocol (MCP) |
+| **AI providers** | Anthropic, Ollama (local models such as Qwen), or any OpenAI-compatible endpoint, behind one schema-constrained interface |
+| **Quality gates** | ~190 backend tests (unit and Postgres integration), frontend Vitest suite, `ruff`, `mypy`, ESLint, `tsc`, and an `alembic check` that fails CI when migrations drift from models |
+| **Scaling model** | Stateless replicas; all shared state and job queues live in Postgres |
+
+---
+
+## Architecture
+
+```mermaid
+flowchart LR
+  subgraph EXT["Outside the app"]
+    MERCH["Merchant<br/>(Shopify admin)"]
+    AGENT["AI shopping agent<br/>ACP · UCP · MCP"]
+    SHOPPER["Shopper"]
+    SHOP[("Shopify<br/>Admin GraphQL,<br/>webhooks, checkout")]
+    STORE["Merchant storefront"]
+    AI[("AI provider<br/>Anthropic · Ollama ·<br/>OpenAI-compatible")]
+  end
+
+  subgraph FE["frontend-ui · React Router 7 + Polaris"]
+    PAGES["Embedded admin pages"]
+    AUTH["Shopify OAuth<br/>+ session storage"]
+    WHF["Webhook receivers"]
+    EXTN["Theme app extension<br/>(JSON-LD)"]
+  end
+
+  subgraph BE["backend-engine · FastAPI (async)"]
+    MAPI["Merchant API"]
+    AAPI["Agent API<br/>ACP · UCP · MCP · llm.txt"]
+    CART["Protocol-neutral<br/>cart engine"]
+    WORK["Durable workers<br/>audit · enrich · publish · refresh"]
+  end
+
+  PG[("Postgres 16<br/>shopify_app + gateway schemas")]
+
+  MERCH --> PAGES
+  PAGES -->|"Ed25519 service JWT"| MAPI
+  SHOP -->|"HMAC webhooks"| WHF
+  WHF -->|"raw body, re-verified"| BE
+  AGENT -->|"per-agent API key"| AAPI
+  AAPI --> CART
+  CART -->|"draftOrderCalculate"| SHOP
+  AAPI -->|"checkout link"| AGENT
+  AGENT --> SHOPPER
+  SHOPPER -->|"pays on Shopify checkout"| SHOP
+  EXTN --> STORE
+  AGENT -->|"reads JSON-LD"| STORE
+  WORK -->|"read products,<br/>write metafields"| SHOP
+  WORK --> AI
+  AUTH --> PG
+  BE --> PG
+```
+
+| Component | Stack | Responsibility |
 |---|---|---|
-| [`frontend-ui/`](frontend-ui) | React Router 7 (Shopify's Remix successor), Polaris, Prisma | Merchant OAuth, embedded admin dashboard, theme app extension |
-| [`backend-engine/`](backend-engine) | Python 3.12, FastAPI, SQLModel, Alembic | Business logic, protocol adapters (UCP/ACP/MCP), webhooks, checkout handoff |
-| `infra/`, `docker-compose*.yml` | Docker, Postgres 16 | Local stack and production smoke tests |
+| [`frontend-ui/`](frontend-ui) | React Router 7 (Shopify's Remix successor), Polaris web components, Prisma, TypeScript | Shopify OAuth and sessions, the embedded merchant dashboard, webhook receivers, and a theme app extension that injects Product and Organization JSON-LD into the storefront |
+| [`backend-engine/`](backend-engine) | Python 3.12, FastAPI, SQLModel on async SQLAlchemy (psycopg 3), Alembic, Pydantic | All business logic: catalog audit and enrichment, metafield write-back, agent protocol adapters, cart engine, durable background workers |
+| Postgres 16 | One database, two schemas | Prisma owns `shopify_app` (sessions only); Alembic owns `gateway` (all domain tables). Neither service migrates the other's schema |
 
-Both services share one Postgres database. Prisma owns the `shopify_app` schema (Shopify sessions only); Alembic owns the `gateway` schema (all domain tables). frontend-ui never reads `gateway` tables directly: it calls backend-engine with a 60-second Ed25519-signed service JWT. See [docs/architecture.md](docs/architecture.md) for how the system is built and [docs/flow.md](docs/flow.md) for the end-to-end flow from install to an agent sending a buyer to checkout. New to ecommerce? [docs/catalog-audit.md](docs/catalog-audit.md) explains the catalog audit and its scores from first principles, [docs/catalog-enrichment.md](docs/catalog-enrichment.md) explains how missing product data is found, reviewed and written back, and [docs/agentic-commerce.md](docs/agentic-commerce.md) explains how AI agents shop the store through ACP, UCP and MCP while merchants never see those details.
+The browser never calls backend-engine directly. Every dashboard request goes browser → frontend-ui loader → backend-engine with a 60-second, single-use, Ed25519-signed service token.
 
-## Status
+### Backend layering
 
-| Phase | Scope | State |
+The backend is a strict layered architecture. Each layer imports only from the layers below it: nothing below `api` imports FastAPI, and business services never import a protocol adapter.
+
+```
+api/            HTTP edge: routers, auth dependencies, idempotency, MCP mount
+protocols/      pure adapters: ACP / UCP / MCP wire format  <->  protocol-neutral cart model
+jobs/           durable Postgres-queue workers and job bodies
+services/       business rules; Shopify, storefront and AI I/O behind small client classes
+repositories/   database access, one class per aggregate, always scoped by merchant
+models/         SQLModel tables (gateway schema)
+core/           config, async DB sessions, JWT / HMAC / encryption, secret-redacting logs
+```
+
+Adding a fourth agent protocol means writing one adapter; the cart engine, stock checks, pricing and checkout handoff are reused unchanged.
+
+### Agent checkout, end to end
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant A as AI agent
+  participant G as backend-engine
+  participant S as Shopify
+  participant B as Shopper
+
+  A->>G: POST /acp/checkout_sessions<br/>Bearer key + Idempotency-Key
+  G->>G: verify key (prefix lookup, argon2), claim idempotency key
+  G->>G: adapter parses wire format into CartChanges
+  G->>S: live stock check + draftOrderCalculate (real shipping & tax)
+  S-->>G: priced cart
+  G-->>A: session ready + continue_url (Shopify cart permalink)
+  A->>B: "Review and pay here"
+  B->>S: pays on the merchant's own Shopify checkout
+  S->>G: orders/create webhook (HMAC)
+  G->>G: link order to cart via _agentic_cart_id, mark completed
+```
+
+The full journey from install to checkout, including onboarding, audits and enrichment, is drawn in [docs/flow.md](docs/flow.md).
+
+---
+
+## Engineering highlights
+
+**Durable job processing without extra infrastructure.** Audits, enrichment, publishing, refreshes and store search tests run on Postgres-backed queues instead of in-request tasks or a separate broker. Workers claim jobs with `SELECT … FOR UPDATE SKIP LOCKED`, heartbeat while running, and **fence every write on `(id, attempt, status)`** so a worker that was presumed dead can never overwrite a newer attempt. Transient failures retry with linear backoff, permanent ones (store uninstalled, token revoked) fail immediately, and graceful shutdown releases jobs without spending an attempt. Enrichment and publishing resume where they stopped.
+
+**One cart engine, three protocols.** ACP, UCP and MCP are thin, pure adapters over a single `CartManager` that re-checks live inventory on every change, clamps over-requests with a warning, and prices through Shopify's `draftOrderCalculate`, so shipping and tax come from the merchant's own settings. ACP and UCP writes are idempotent: a retry with the same key and body replays the stored response; the same key with a different body gets `409`.
+
+**Evidence-backed AI that resists prompt injection.** Enrichment runs a deterministic rule extractor and, optionally, an LLM. Product text is passed to the model as delimited JSON data, never as instructions, and every value the model returns must cite a quote that **actually occurs in the product content and contains the value**. Instruction-like quotes are rejected, unstated values stay empty, and output is constrained to the same JSON schema for every provider. Each suggestion records its evidence, source, method, confidence and validation result.
+
+**Human-in-the-loop writes that are safe to retry and to undo.** Nothing is published automatically. Merchants review suggestions, preview every metafield change (create, update, unchanged or blocked), and confirm. Writes use `metafieldsSet` with `compareDigest`, so concurrent edits in Shopify admin are never clobbered, and every write is logged with before and after values and can be reverted. Opt-in auto-approval only fires when a value fills an empty field, passes validation with no warnings, was independently confirmed by rule extraction, and clears a confidence threshold.
+
+**Zero-trust service boundaries.** The two services authenticate each other with separate Ed25519 key pairs, short-lived tokens with audience, issuer and scope checks, and single-use `jti` values stored in Postgres so replays fail across replicas. Shopify webhooks are HMAC-verified twice (frontend and backend) and deduplicated. Agent keys are argon2-hashed, scoped to one protocol and revocable. Offline tokens are Fernet-encrypted at rest, and logs redact secrets.
+
+**Horizontally scalable by design.** Every piece of shared state (JWT replay guard, `llm.txt` cache, job queues, idempotency records) lives in Postgres; the remaining in-process caches only save work and never affect correctness. All backend database access is async, and CPU-heavy steps (argon2, HTML parsing) run in worker threads so the event loop never stalls.
+
+**Built to the platform's rules.** An earlier design charged payments and created orders directly. It was deliberately replaced with a checkout handoff to stay within [Shopify App Store rule 1.1.2](https://shopify.dev/docs/apps/launch/shopify-app-store/app-store-requirements), which forbids bypassing Shopify checkout. The app now handles no money and stores no customer details beyond an order id and name, and GDPR `customers/redact` clears any buyer details agents sent.
+
+## Key design decisions
+
+| Decision | Why |
+|---|---|
+| Two services instead of one | Shopify's first-party app tooling (OAuth, session refresh, embedded UI, theme extensions) is JavaScript; the catalog, AI and protocol work is a better fit for Python's typing and data tooling. A signed service-JWT contract keeps the boundary explicit. |
+| One database, two schemas, two migration tools | Each service owns and migrates only its schema, so deploys stay independent without the cost of a second database. |
+| Postgres as the job queue | `SKIP LOCKED`, heartbeats and fencing give at-least-once, crash-safe processing with no Redis or broker to run and monitor. |
+| frontend-ui owns Shopify token refresh | Shopify offline tokens now expire. Letting a single owner refresh them means the two services can never invalidate each other's refresh tokens; the backend asks the frontend for a fresh token over a second signed channel. |
+| Protocol-neutral cart model | Agent protocols are young and changing. Isolating wire formats in pure adapters keeps the business logic stable and each protocol cheap to update or add. |
+| Hand off to Shopify checkout | Complies with App Store rules, keeps the merchant's payment gateways, fraud tools and order flow intact, and removes PCI scope from the app entirely. |
+| Rules first, AI optional | The system works with no model configured; AI widens coverage but every AI value must pass the same evidence check as a rule-based one. |
+
+---
+
+## What it does
+
+<details>
+<summary><b>Storefront check</b>: can agents read the store at all?</summary>
+
+Fetches the homepage, a product page, `robots.txt` and `llms.txt` behind an SSRF guard (public hosts only, re-checked after redirects, response size capped). Verifies Product, Offer, Organization and WebSite JSON-LD, OpenGraph and Twitter metadata, the theme block marker and whether AI crawlers are allowed. The dashboard's setup guide deep-links the merchant into the theme editor to turn on the app's JSON-LD block and embed.
+</details>
+
+<details>
+<summary><b>AI Discovery Score</b>: how legible is each product to an agent?</summary>
+
+Each active product is scored 0-100 across eight weighted dimensions: identity 15, description 20, media 15, identifiers 15, offers 10, taxonomy 10, attributes 10, reviews 5. The store score is the average. Meta mapping rules let merchants credit facts already encoded in tags, vendor, product type or metafields (for example a `brand:(.+)` tag rule), with a live preview against the store's products before saving. See [docs/catalog-audit.md](docs/catalog-audit.md).
+</details>
+
+<details>
+<summary><b>Catalog intelligence</b>: category schemas, findings and a readiness score</summary>
+
+Built-in category schemas (backpacks, tents, sleeping bags, outerwear, footwear, general) define each attribute's type, unit, allowed values, importance and target metafield; merchants can edit or add their own. The audit raises evidence-quoted findings such as `attribute_missing`, `attribute_buried`, `attribute_contradiction` and `claim_unsupported`, and computes a transparent readiness score:
+
+```
+score = 100 × Σ(weight × value) / Σ(weight)     over the components that apply
+```
+
+| Component | Weight | Measures |
 |---|---|---|
-| 1 | Monorepo, Docker, Railway config, Postgres schemas, service-JWT auth, installation checker | Done |
-| 2 | Catalog auditor + AI Discovery Score, streaming `llm.txt`, dashboard | Done |
-| 3 | UCP / ACP / MCP adapters, cart and inventory services | Done |
-| 4 | Agent checkout handoff to the store's own Shopify checkout | Done |
-| 5 | Catalog intelligence: category schemas, readiness score, evidence-backed enrichment, review queue, typed metafield write-back | Done |
+| Completeness | 30 | importance-weighted share of schema attributes with a valid value |
+| Validity | 15 | structured values that parse and fit the schema |
+| Consistency | 15 | structured values that agree with the description |
+| Evidence | 10 | claims (waterproof, recycled, …) backed by a structured field |
+| Variants | 10 | SKUs, prices and the options the category expects |
+| Foundation | 20 | AI Discovery Score / 100 |
 
-## Local development
+Weights and the agent-ready threshold are configurable. Discovery tests show how many products could answer realistic shopper questions ("lightweight hiking backpack around 30 liters"), and a **store search test** asks those questions of the store's own search through its Storefront MCP endpoint and reports recall.
+</details>
 
-This follows Shopify's standard setup. The Shopify app (frontend-ui) runs on your machine with the Shopify CLI. Docker runs everything else: Postgres and backend-engine, plus Ollama if you want a local AI model.
+<details>
+<summary><b>Enrichment, review and write-back</b>: fixing the gaps safely</summary>
 
-Install [Docker Desktop](https://www.docker.com/products/docker-desktop/) (or OrbStack), [Node 22](https://nodejs.org/) and the [Shopify CLI](https://shopify.dev/docs/api/shopify-cli) (`npm install -g @shopify/cli`). You also need a Shopify Partner account with a development store.
+1. A worker re-reads each selected product and runs the rule extractor plus the optional AI model.
+2. Every proposed value is validated against a quote from the product's own content.
+3. Suggestions land in the **Review queue** (approve, edit-and-approve with server-side validation, reject, bulk actions), or pass through opt-in auto-approval.
+4. A preview shows every metafield change; a confirmed publish runs as a background job with progress.
+5. Values are written as typed custom metafields, and attributes mapped to Shopify's standard taxonomy also fill category metafields and metaobject entries.
+6. Every change is logged and revertible, and a single-product refresh re-scores the product immediately.
 
-**First time only**
+See [docs/catalog-enrichment.md](docs/catalog-enrichment.md).
+</details>
+
+<details>
+<summary><b>Agent feed and protocols</b>: llm.txt, ACP, UCP and MCP</summary>
+
+`GET /api/v1/agent-gateway/llm.txt?shop=<store>` streams policies, brand FAQs, collections and products as compact Markdown, cached in Postgres for 10 minutes.
+
+Merchants issue one API key per agent on the **Agent access** page. Agents authenticate with `Authorization: Bearer acg_live_…`.
+
+| Protocol | Endpoints | Notes |
+|---|---|---|
+| ACP | `POST /api/v1/acp/checkout_sessions`, `GET`/`POST …/{id}`, `POST …/{id}/cancel` | [Agentic Checkout spec](https://developers.openai.com/commerce/specs/checkout), amounts in minor units |
+| UCP | `POST /api/v1/ucp/checkout-sessions`, `GET`/`PUT …/{id}`, `POST …/{id}/cancel`, discovery at `/.well-known/ucp` | [UCP checkout REST binding](https://ucp.dev/specification/shopping/checkout/rest/) with the fulfillment extension |
+| MCP | `POST /mcp` (streamable HTTP, stateless JSON) | Tools: `search_products`, `get_product`, `create_cart`, `update_cart`, `get_cart`, `cancel_cart` |
+
+A `ready` cart carries a Shopify cart permalink with lines, email and address prefilled and a hidden `_agentic_cart_id` attribute. ACP returns it as `continue_url`, UCP returns `requires_escalation`, and MCP includes `checkout_url`. When the shopper pays, the `orders/create` webhook links the Shopify order back to the agent cart, and the merchant sees every agent cart and its outcome on the **Agent checkouts** page. See [docs/agentic-commerce.md](docs/agentic-commerce.md).
+</details>
+
+---
+
+## Tech stack
+
+| Area | Technologies |
+|---|---|
+| Backend | Python 3.12, FastAPI, Pydantic, SQLModel, async SQLAlchemy, psycopg 3, Alembic, argon2, PyJWT (EdDSA), Fernet, httpx |
+| Frontend | React Router 7, TypeScript, Shopify Polaris web components, Shopify App Bridge, Prisma, Liquid (theme extension) |
+| AI | Anthropic API, Ollama (Qwen), OpenAI-compatible endpoints (vLLM, LM Studio, OpenRouter) |
+| Protocols | ACP, UCP, MCP, Shopify Admin GraphQL `2026-10`, Storefront MCP |
+| Data and infra | Postgres 16, Docker multi-stage builds, Docker Compose |
+| Quality | pytest with real Postgres integration tests, Vitest, ruff, mypy, ESLint, GitHub Actions |
+
+## Repository layout
+
+```
+backend-engine/
+  app/api/            FastAPI routers, auth dependencies, idempotency, MCP mount
+  app/protocols/      ACP / UCP adapters and the MCP server
+  app/services/       catalog auditor, readiness, enrichment, AI enricher, cart manager,
+                      metafield and taxonomy writers, Shopify client, order linker, …
+  app/jobs/           durable workers: audits, enrichment, publish, refresh, discovery
+  app/repositories/   merchant-scoped database access
+  app/models/         SQLModel tables (gateway schema)
+  migrations/         Alembic
+  tests/              unit and Postgres integration tests
+frontend-ui/
+  app/routes/         embedded admin pages and webhook receivers
+  app/lib/            service-JWT minting and the typed backend client
+  extensions/         theme app extension (JSON-LD blocks)
+  prisma/             Shopify session storage (shopify_app schema)
+docs/                 architecture, flow and feature deep dives
+```
+
+---
+
+## Run it locally
+
+You need [Docker Desktop](https://www.docker.com/products/docker-desktop/) (or OrbStack), [Node 22](https://nodejs.org/), the [Shopify CLI](https://shopify.dev/docs/api/shopify-cli) (`npm install -g @shopify/cli`) and a Shopify Partner account with a development store. The Shopify app (frontend-ui) runs on your machine with the Shopify CLI; Docker runs Postgres and backend-engine.
+
+**First time**
 
 ```bash
-make keys                 # writes the service keys to ./.env and frontend-ui/.env
+make keys                 # generate the service keys into ./.env and frontend-ui/.env
 cd frontend-ui
 npm install
 npm run config:link       # sign in to Shopify and pick (or create) your app
 npm run env show          # copy SHOPIFY_API_KEY and SHOPIFY_API_SECRET into ../.env
 ```
 
-`config:link` connects this code to your app in the Partner dashboard and writes its id into `shopify.app.toml`. backend-engine needs the two `SHOPIFY_*` values in `./.env` to verify Shopify webhooks.
-
 **Every time**
 
 ```bash
-docker compose up -d      # from the repo root: Postgres :5432, backend-engine :8000 (API docs at /docs)
+make up                   # Postgres :5432, backend-engine :8000 (OpenAPI docs at /docs)
 cd frontend-ui
-npm run dev               # shopify app dev
+npm run dev               # Shopify CLI: tunnel, install on the dev store, app on :3000
 ```
 
-`npm run dev` starts the Shopify CLI. The first time it asks which dev store to use. It opens a secure tunnel, installs the app on the store, starts the app on port 3000 and prints a preview link. Open that link to use the app inside Shopify admin. Press `q` to stop it, and run `docker compose down` to stop the services.
+Open the preview link the CLI prints to use the app inside Shopify admin. Migrations run on start and code changes reload automatically. Then use the dashboard's **Setup guide** to turn on the product data block and store data embed in the theme editor.
 
-Database migrations run automatically on start, and code changes reload automatically. After changing `pyproject.toml`, run `docker compose up -d --build`.
+**Optional local AI model:** `make up-ollama` adds an Ollama container and pulls `qwen3:8b` (about 5 GB) for enrichment. Set `AI_MODEL` in `.env` to use a smaller model such as `qwen3:4b`.
 
-Then enable the theme app extension, which adds product and store structured data to the storefront. The dashboard's **Setup guide** has two buttons, **Add product data block** and **Turn on store data embed**, that open the theme editor with the block or embed preselected; click Save after each. Merchants who install the app follow the same guide.
-
-**Optional: local AI model.** To run catalog enrichment with a local model, start the services with `AI_PROVIDER=ollama docker compose --profile ollama up -d`. This adds an Ollama container on :11434 and pulls `qwen3:8b` on first run (about 5 GB, kept in the `ollama` volume). Set `AI_MODEL` in `.env` to pull a different model, for example `qwen3:4b` on a machine with less memory.
-
-### Tests
+### Tests and checks
 
 ```bash
-docker compose up -d postgres
-docker compose run --rm -e TEST_DATABASE_URL=postgresql://gateway:gateway@postgres:5432/gateway_test backend pytest
-docker compose run --rm backend sh -c "ruff check . && ruff format --check . && mypy app"
-cd frontend-ui && npm test && npm run lint && npm run typecheck
-docker compose -f docker-compose.prod.yml up --build      # build and run the production images locally
+make test        # backend pytest (against Postgres) + frontend Vitest
+make lint        # ruff, ruff format, mypy, ESLint, tsc
+make prod-smoke  # build and run the production images locally
 ```
 
-## Deploying to Railway
+---
 
-One Railway project, three services. Each app service has a `railway.json` (config as code), so builds, health checks and migrations are already defined.
+## Documentation
 
-1. **Postgres**: add the Railway Postgres database.
-2. **backend-engine**: New service from this GitHub repo, root directory `/backend-engine`. Variables:
-   - `DATABASE_URL=${{Postgres.DATABASE_URL}}`
-   - `HOST=::` (Railway's private network is IPv6)
-   - `JWT_PUBLIC_KEY`, `BACKEND_JWT_PRIVATE_KEY`, `TOKEN_ENCRYPTION_KEY` (from `make keys`)
-   - `FRONTEND_INTERNAL_URL=http://${{frontend-ui.RAILWAY_PRIVATE_DOMAIN}}:${{frontend-ui.PORT}}`
-   - `SHOPIFY_API_KEY`, `SHOPIFY_API_SECRET`
-   - `PUBLIC_BASE_URL=https://<backend public domain>` (used in the UCP discovery profile)
-   - Optional: an AI provider for catalog enrichment. `AI_PROVIDER` is `anthropic` (with `ANTHROPIC_API_KEY`), `ollama` or `openai_compatible` (with `AI_BASE_URL`, `AI_MODEL` and `AI_API_KEY`). Leaving `AI_PROVIDER` empty uses Anthropic when `ANTHROPIC_API_KEY` is set. Without a provider, enrichment uses rules only.
-   - Generate a public domain: agents and Shopify must reach `llm.txt`, protocol and webhook routes.
-3. **frontend-ui**: New service from this repo, root directory `/frontend-ui`. Variables:
-   - `DATABASE_URL=${{Postgres.DATABASE_URL}}?schema=shopify_app`
-   - `BACKEND_INTERNAL_URL=http://${{backend-engine.RAILWAY_PRIVATE_DOMAIN}}:${{backend-engine.PORT}}`
-   - `JWT_PRIVATE_KEY`, `BACKEND_JWT_PUBLIC_KEY` (from `make keys`)
-   - `SHOPIFY_API_KEY`, `SHOPIFY_API_SECRET`, `SCOPES` (same as `shopify.app.toml`)
-   - `SHOPIFY_APP_URL=https://<frontend public domain>`
-   - `BACKEND_PUBLIC_URL=https://<backend public domain>` (shown to merchants on the Agent access page)
-   - Generate a public domain, then set it as `application_url` and the auth redirect in `shopify.app.toml` and run `npm run deploy` in `frontend-ui/`.
+| Doc | What's in it |
+|---|---|
+| [docs/architecture.md](docs/architecture.md) | Full system design: layers, routers, services, workers, data model, security boundaries, configuration |
+| [docs/flow.md](docs/flow.md) | End-to-end flow from install to an agent sending a shopper to checkout, with diagram |
+| [docs/catalog-audit.md](docs/catalog-audit.md) | The catalog audit and its scores from first principles, with a worked example |
+| [docs/catalog-enrichment.md](docs/catalog-enrichment.md) | How missing product data is found, validated, reviewed and written back |
+| [docs/agentic-commerce.md](docs/agentic-commerce.md) | How AI agents shop the store through ACP, UCP and MCP |
 
-Pushes to `main` redeploy only the service whose folder changed. Migrations run in each service's pre-deploy step (`alembic upgrade head`, `prisma migrate deploy`).
+## Project status
 
-## AI Discovery Score
-
-Each active product is scored 0-100 across eight weighted dimensions (identity 15, description 20, media 15, identifiers 15, offers 10, taxonomy 10, attributes 10, reviews 5). The store's score is the average. Meta mapping rules let merchants credit facts encoded in tags, vendor, product type or metafields, e.g. a `brand:(.+)` tag rule; the **Meta mapping rules** page previews a rule against the store's first 100 active products before saving it (`/api/v1/merchant/mapping-rules`, `POST …/preview`). See [docs/catalog-audit.md](docs/catalog-audit.md) for every rule and a worked example.
-
-## Catalog intelligence
-
-The admin app audits each product against the attributes AI shopping agents need for its category, suggests missing values from the product's own content, and writes the values the merchant approves to typed product metafields.
-
-1. **Sync.** A catalog audit pages through every active product on a durable Postgres job queue with retries. `products/update` and `products/delete` webhooks keep the snapshot current between audits; deleted or unpublished products close their open suggestions.
-2. **Category schemas.** Built-in schemas (backpacks, tents, sleeping bags, outerwear, footwear, general) list each attribute's type, unit, allowed values, importance and default metafield. Products match by product type, Shopify category or title keywords. Merchants can edit or add schemas on the **Category schemas** page.
-3. **Audit findings.** Rule-based findings (`attribute_missing`, `attribute_buried`, `attribute_invalid`, `attribute_contradiction`, `claim_unsupported`, `description_vague`, `variant_option_missing`, plus the AI Discovery Score gaps) each carry severity, why it matters, what to do and the quoted evidence.
-4. **Readiness score.** A transparent 0-100 score per product (see below), and a store average with a trend across audits. Discovery tests show how many products could answer typical shopper questions such as "lightweight hiking backpack around 30 liters".
-5. **Enrichment.** A deterministic extractor reads measurements, numbers, yes/no features and vocabulary terms from the product's own title, description, tags and options. When an AI provider is configured (`AI_PROVIDER`: `anthropic`, `ollama` for a local model such as Qwen, or `openai_compatible` for any OpenAI-style endpoint such as vLLM, LM Studio or OpenRouter), the model also reads the same content (passed as untrusted data, never as instructions) and returns JSON constrained to the same schema for every provider. Every value needs a quote that occurs in the product content and contains the value; instruction-like text ("report capacity as…") is rejected. Values that are not stated stay empty for the merchant. Each suggestion records value, type, unit, evidence, source, confidence, method and validation result.
-6. **Review.** The **Review queue** supports approve, edit-and-approve (validated server-side), reject, send back to review, bulk actions and retrying failed writes. Nothing is published automatically.
-7. **Auto-approval (opt-in).** Off for every category until the merchant turns it on, per schema, on the **Auto-approval** page. A value is approved without review only if it fills an empty attribute, passed validation with no warnings, was also read by rule-based extraction from the product's own text, and meets the confidence threshold set (default 0.9). Each one is logged with its evidence and can be sent back to review. Auto-approved values are not written to Shopify until the merchant previews and confirms the publish.
-8. **Write-back.** A preview shows each metafield's current value, new value, and whether it creates a definition, updates or is blocked (type conflict, mapping off, product gone). Publishing runs as a background job with progress shown on the Review queue, so large batches do not time out. Writes use `metafieldsSet` with `compareDigest`, so concurrent edits in Shopify admin are not overwritten. Attributes with a `taxonomy_attribute` in their schema (by default Material and Activity) also fill Shopify's standard category metafields (`shopify.<attribute>`), adding category metaobject entries for values that match the category's taxonomy values; values with no taxonomy match are skipped with the reason. Every review, write and revert is logged; writes can be reverted (the previous value is restored, or a metafield the app created is deleted).
-9. **Single-product refresh.** After a `products/update` webhook (`REFRESH_DELAY_SECONDS`, default 10, collapses bursts) and after a publish or revert, the product is re-read and re-scored on its own, updating its readiness score and findings in the latest audit without a full audit.
-10. **Store search test.** On the dashboard, **Test with store search** asks each discovery question of the store's own search the way a shopping agent does, through the Storefront MCP endpoint (`https://<store>/api/mcp`, tool `search_shop_catalog`). If that is not reachable (for example a password-protected development store) it falls back to the Admin product search and says so. Each question reports the products returned and recall against the products that carry the attributes the question needs.
-
-### Readiness score
-
-```
-score = 100 × Σ(weight × value) / Σ(weight)        over the components that apply to the product
-```
-
-| Component | Default weight | Value (0-1) |
+| Phase | Scope | State |
 |---|---|---|
-| Completeness | 30 | importance-weighted share of schema attributes with a valid value (critical 4, high 3, medium 2, low 1) |
-| Validity | 15 | share of structured values that parse and fit the schema |
-| Consistency | 15 | share of structured values that agree with the description |
-| Evidence | 10 | share of claims (waterproof, recycled, …) backed by a structured field |
-| Variants | 10 | SKUs, prices, named options and the options the category expects |
-| Foundation | 20 | the AI Discovery Score / 100 |
+| 1 | Monorepo, Docker, Postgres schemas, service-JWT auth, installation checker | Done |
+| 2 | Catalog auditor and AI Discovery Score, streaming `llm.txt`, dashboard | Done |
+| 3 | UCP / ACP / MCP adapters, cart and inventory services | Done |
+| 4 | Agent checkout handoff to the store's own Shopify checkout | Done |
+| 5 | Catalog intelligence: category schemas, readiness score, evidence-backed enrichment, review queue, typed metafield write-back | Done |
 
-Weights and the agent-ready threshold (default 80) are configurable on the **Settings** page. It is an internal data-quality measure, not any platform's ranking signal.
+**Known limitations.** The `orders/create` webhook subscription is switched off in `shopify.app.toml` until the app is granted Shopify's protected customer data access; the order-linking code is in place and tested. Taxonomy metaobject writes and the Storefront MCP response format follow Shopify's documentation and are exercised against a fake API in tests, but have not yet been run against a live production store.
 
-Catalog endpoints live under `/api/v1/merchant/catalog` (overview, products, findings, runs, enrichment-jobs, suggestions, publish, publish-jobs, discovery-runs, auto-approval, changes, schemas, mappings, settings). Writing metafields needs the `write_products` scope, and filling standard category metafields needs `write_metaobjects`, so existing installs must approve the new scopes. Without `write_metaobjects`, those category values are skipped with the reason and the custom metafields are still written.
+---
 
-## Agent feed: llm.txt
+<div align="center">
 
-`GET /api/v1/agent-gateway/llm.txt?shop=<store>.myshopify.com` on backend-engine streams the store's policies, brand FAQs (`PUT /api/v1/merchant/faqs`), collections and active products as compact Markdown, cached for 10 minutes. To serve it at `https://<store>/llms.txt`, point a Shopify app proxy at backend-engine and add a URL redirect from `/llms.txt` to the proxy path.
+Designed and built by **[Rajat Rao](https://github.com/rajatrao)**.
 
-## Agent checkout protocols
-
-Merchants create an API key per agent on the **Agent access** page (one protocol per key, argon2-hashed, revocable). Agents send it as `Authorization: Bearer acg_live_…`. New to agentic commerce? Start with [docs/agentic-commerce.md](docs/agentic-commerce.md).
-
-| Protocol | Endpoints on backend-engine | Notes |
-|---|---|---|
-| ACP | `POST /api/v1/acp/checkout_sessions`, `GET`/`POST …/{id}`, `POST …/{id}/cancel` | [Agentic Checkout spec](https://developers.openai.com/commerce/specs/checkout); amounts in minor units |
-| UCP | `POST /api/v1/ucp/checkout-sessions`, `GET`/`PUT …/{id}`, `POST …/{id}/cancel`; discovery at `/.well-known/ucp` | [UCP checkout REST binding](https://ucp.dev/specification/shopping/checkout/rest/) with the fulfillment extension |
-| MCP | `POST /mcp` (streamable HTTP, stateless JSON) | Tools: `search_products`, `get_product`, `create_cart`, `update_cart`, `get_cart`, `cancel_cart` |
-
-ACP and UCP writes require an `Idempotency-Key` header: a retry with the same key and body replays the stored response, and the same key with a different body gets `409`.
-
-All three share [`cart_manager.py`](backend-engine/app/services/cart_manager.py): each change re-checks live stock (archived products, unsellable variants and tracked "deny" inventory; over-requests are clamped with a warning), then prices the cart through Shopify's `draftOrderCalculate`, so shipping rates and taxes come from the merchant's own settings. The cheapest rate is preselected. A cart is `ready` once it has sellable lines (and, when an address is given, the store ships there). The buyer's email and address are optional: they prefill checkout and make the quoted shipping and tax exact. Carts expire after 6 hours without changes.
-
-## Checkout handoff
-
-The gateway never takes payment or creates orders. Under [Shopify App Store rule 1.1.2](https://shopify.dev/docs/apps/launch/shopify-app-store/app-store-requirements), apps must not bypass Shopify checkout, so the buyer always pays on the merchant's own Shopify checkout:
-
-1. A `ready` cart carries `checkout_url`, a [cart permalink](https://shopify.dev/docs/apps/build/checkout/create-cart-permalinks) such as `https://<store>/cart/<variant>:<qty>,…?checkout[email]=…&checkout[shipping_address][…]=…&attributes[_agentic_cart_id]=<cart id>`, with the lines, email and address prefilled.
-2. ACP returns it as `continue_url`. UCP returns status `requires_escalation` with `continue_url` and a `requires_buyer_review` message. MCP's `create_cart`, `update_cart` and `get_cart` include `checkout_url`.
-3. The agent hands the link to the buyer, who reviews and pays with Shopify Payments, Shop Pay or any gateway the store has. The order is a normal Shopify order, carrying the `_agentic_cart_id` cart attribute.
-4. ACP and UCP `complete` endpoints answer `409 requires_escalation` with the link, and the UCP profile advertises no payment handlers.
-
-When the buyer pays, Shopify's `orders/create` webhook links the order back to its cart through that attribute. The cart becomes `completed`, and ACP and UCP sessions (and MCP carts) return an `order` with its id and status page. Only the order's id and name are stored, never customer details, and `customers/redact` clears the buyer details agents sent. Merchants see every agent cart (status, total, checkout link, resulting order) on the **Agent checkouts** page.
-
-`orders/create` needs the `read_orders` scope and [protected customer data access](https://shopify.dev/docs/apps/launch/protected-customer-data) (level 1, no customer fields). Request it in the Partner dashboard under **API access** before deploying the app config.
-
-## Service-to-service auth
-
-| Direction | Purpose | Key holder | Verifier |
-|---|---|---|---|
-| frontend-ui -> backend-engine | dashboard API calls, merchant sync | `JWT_PRIVATE_KEY` (frontend) | `JWT_PUBLIC_KEY` (backend) |
-| backend-engine -> frontend-ui | fetch a fresh Shopify offline token (`POST /internal/admin-token`) | `BACKEND_JWT_PRIVATE_KEY` (backend) | `BACKEND_JWT_PUBLIC_KEY` (frontend) |
-
-Shopify offline tokens now expire and are refreshed by frontend-ui's Shopify library, which owns the session. backend-engine never refreshes tokens itself, so the two services can't invalidate each other's refresh tokens.
-
-## Running more than one replica
-
-Both services are safe to scale horizontally. Everything that has to be shared lives in Postgres:
-
-- **Service-JWT replay guard.** Each `jti` is stored until its token expires (`gateway.service_token_jtis` on backend-engine, `shopify_app.ServiceTokenJti` on frontend-ui), so a token is accepted once across all replicas.
-- **llm.txt cache.** Rendered feeds live in `gateway.llm_txt_cache`, so an FAQ edit on one replica invalidates every copy.
-- **Catalog audits.** `POST /api/v1/merchant/audits` queues a run. Every backend replica runs a worker that claims due runs with `FOR UPDATE SKIP LOCKED`, heartbeats while it works and retries transient failures with backoff (up to `AUDIT_MAX_ATTEMPTS`, default 3). If a process dies mid-audit, its heartbeat goes stale after `AUDIT_STALE_SECONDS` (default 120) and another worker restarts the run; writes from the abandoned attempt are rejected. On a graceful shutdown the run goes straight back to the queue. Set `AUDIT_WORKER_ENABLED=false` on replicas that should not run audits.
-
-The remaining in-process caches are performance-only: verified agent keys (revocation is still read from the database on every request) and Shopify Admin tokens.
-
-All database access in backend-engine is async (SQLAlchemy `AsyncSession` on psycopg 3), and CPU-heavy steps (argon2, storefront HTML parsing) run in worker threads, so a slow query or hash no longer stalls the event loop. Alembic still uses the synchronous psycopg2 driver.
-
-## Repository layout
-
-```
-backend-engine/
-  app/api/          FastAPI routers and auth dependencies
-  app/protocols/    UCP / ACP adapters and the MCP server (wire format <-> cart_manager)
-  app/services/     business logic: installation_checker, catalog_auditor, tag_mapper,
-                    llm_txt_renderer, shopify_client, cart_manager, agent_keys,
-                    catalog_schema, readiness, attribute_extractor, ai_enricher,
-                    enrichment, auto_approval, metafield_writer, taxonomy_writer,
-                    catalog_publisher, product_sync, product_refresh, discovery_probe,
-                    order_linker
-  app/jobs/         durable workers on Postgres queues: audits, enrichment, and catalog
-                    jobs (refresh, publish, store search test)
-  app/repositories/ database access
-  app/models/       SQLModel tables (gateway schema)
-  migrations/       Alembic
-frontend-ui/
-  app/lib/          service-JWT minting and the typed backend client
-  app/routes/       dashboard, catalog audit, product detail, review queue, sync and jobs,
-                    auto-approval, settings, category schemas, metafield mapping,
-                    meta mapping rules, agent access, agent checkouts, auth, webhooks
-                    (forwarded to backend-engine)
-  extensions/agentic-schema-block/  theme app extension (JSON-LD blocks)
-  prisma/           Shopify session storage (shopify_app schema)
-docs/architecture.md
-```
+</div>

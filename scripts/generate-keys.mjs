@@ -55,7 +55,7 @@ const out = [
   .filter(Boolean)
   .join("\n");
 writeFileSync(path, out + "\n", { mode: 0o600 });
-console.log("Wrote keys to .env. Set the same values as Railway service variables for production.");
+console.log("Wrote keys to .env. Set the same values as environment variables in production.");
 syncFrontend(out);
 
 // frontend-ui signs with JWT_PRIVATE_KEY and verifies backend-engine with BACKEND_JWT_PUBLIC_KEY.

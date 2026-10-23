@@ -42,6 +42,22 @@ This gateway closes both gaps for a merchant, end to end:
 
 ## Architecture
 
+### Three layers
+
+<p align="center">
+  <img src="docs/layers.svg" alt="Three-layer architecture: AI Discoverability, Experience and Transaction, between AI shopping agents and Shopify" width="860">
+</p>
+
+The gateway is built as three layers that take a merchant from *being found* by an AI agent to *being paid*:
+
+| Layer | Goal | How it is built |
+|---|---|---|
+| **1. AI Discoverability / Intent** | Improve catalog structure so AI agents discover and understand products faster and better | Catalog audit and AI Discovery Score, category schemas and readiness score, evidence-backed AI enrichment, merchant review, typed metafield write-back, storefront JSON-LD, `llm.txt` and a UCP discovery profile |
+| **2. Experience** | One abstraction over the agent commerce protocols, so every agent shops the same catalog the same way | Pure ACP, UCP and MCP adapters over a protocol-neutral cart engine with live stock, real shipping and tax, idempotent writes and per-agent API keys |
+| **3. Transaction** | Payments and order management | Handoff to the merchant's own Shopify checkout (Shopify Payments, Shop Pay or any gateway), `orders/create` webhook linking each order back to its agent cart, and an agent checkouts dashboard. The app never handles card data |
+
+### System components
+
 ```mermaid
 flowchart LR
   subgraph EXT["Outside the app"]
@@ -312,18 +328,6 @@ make prod-smoke  # build and run the production images locally
 | [docs/catalog-audit.md](docs/catalog-audit.md) | The catalog audit and its scores from first principles, with a worked example |
 | [docs/catalog-enrichment.md](docs/catalog-enrichment.md) | How missing product data is found, validated, reviewed and written back |
 | [docs/agentic-commerce.md](docs/agentic-commerce.md) | How AI agents shop the store through ACP, UCP and MCP |
-
-## Project status
-
-| Phase | Scope | State |
-|---|---|---|
-| 1 | Monorepo, Docker, Postgres schemas, service-JWT auth, installation checker | Done |
-| 2 | Catalog auditor and AI Discovery Score, streaming `llm.txt`, dashboard | Done |
-| 3 | UCP / ACP / MCP adapters, cart and inventory services | Done |
-| 4 | Agent checkout handoff to the store's own Shopify checkout | Done |
-| 5 | Catalog intelligence: category schemas, readiness score, evidence-backed enrichment, review queue, typed metafield write-back | Done |
-
-**Known limitations.** The `orders/create` webhook subscription is switched off in `shopify.app.toml` until the app is granted Shopify's protected customer data access; the order-linking code is in place and tested. Taxonomy metaobject writes and the Storefront MCP response format follow Shopify's documentation and are exercised against a fake API in tests, but have not yet been run against a live production store.
 
 ---
 

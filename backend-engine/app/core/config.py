@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     port: int = 8000
 
-    # Database. Railway injects a `postgresql://` URL; SQLAlchemy needs the driver suffix.
+    # Database. Hosting platforms usually provide a `postgresql://` URL; SQLAlchemy needs the driver suffix.
     database_url: str = "postgresql+psycopg2://gateway:gateway@localhost:5432/gateway"
     db_schema: str = "gateway"
     db_pool_size: int = 10

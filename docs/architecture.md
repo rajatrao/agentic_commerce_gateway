@@ -268,7 +268,7 @@ backend-engine reads environment variables (`backend-engine/app/core/config.py`)
 ## 10. Deployment and local development
 
 - **Local:** the Shopify app (frontend-ui) runs on the developer's machine with the Shopify CLI (`npm run dev`); Docker Compose runs Postgres and backend-engine (`make up`), plus Ollama with `make up-ollama`. Migrations run on start.
-- **Production:** one Railway project with three services (Postgres, backend-engine, frontend-ui), each app with a `railway.json` that runs migrations before deploy and health-checks `/health` or `/healthz`. backend-engine needs a public domain because agents and Shopify call it; its merchant and internal routes still require the service JWT.
+- **Production:** each service ships a multi-stage Dockerfile with a `runtime` target. Run migrations before starting the new version (`alembic upgrade head`, `npx prisma migrate deploy`) and health-check `/health` (backend-engine) or `/healthz` (frontend-ui). `docker compose -f docker-compose.prod.yml up --build` runs the production images locally. backend-engine needs a public domain because agents and Shopify call it; its merchant and internal routes still require the service JWT.
 - **CI:** lint, type-check and test both services.
 
 Step-by-step commands are in the [README](../README.md).

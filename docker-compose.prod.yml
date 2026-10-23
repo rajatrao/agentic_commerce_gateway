@@ -1,4 +1,4 @@
-# Smoke-test the exact production images Railway will run.
+# Smoke-test the exact production images locally.
 #   docker compose -f docker-compose.prod.yml up --build
 
 name: agentic-commerce-gateway-prod

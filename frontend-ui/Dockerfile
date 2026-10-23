@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 # frontend-ui: Shopify embedded app (React Router 7 + Polaris), Prisma on Postgres.
-# Targets: `dev` (used by docker-compose) and `runtime` (production / Railway).
+# Targets: `dev` (used by docker-compose) and `runtime` (production).
 
 ARG NODE_VERSION=22
 

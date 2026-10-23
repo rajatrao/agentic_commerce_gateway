@@ -1,7 +1,7 @@
 import pg from "pg";
 
 /**
- * Liveness/readiness probe for Railway and docker-compose.
+ * Liveness/readiness probe for container health checks and docker-compose.
  * Uses a single raw `pg` connection so the probe does not depend on the Prisma engine.
  */
 let pool: pg.Pool | undefined;

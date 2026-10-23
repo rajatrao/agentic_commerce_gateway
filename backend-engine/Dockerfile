@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 # backend-engine: FastAPI on Python 3.12, dependencies managed by uv.
-# Targets: `dev` (hot reload, used by docker-compose) and `runtime` (production / Railway).
+# Targets: `dev` (hot reload, used by docker-compose) and `runtime` (production).
 
 ARG PYTHON_VERSION=3.12
 
@@ -43,5 +43,5 @@ USER app
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
     CMD python -c "import os,urllib.request; urllib.request.urlopen(f'http://127.0.0.1:{os.environ.get(\"PORT\",\"8000\")}/health', timeout=4)" || exit 1
-# HOST is "::" on Railway (IPv6 private network), 0.0.0.0 elsewhere.
+# HOST defaults to 0.0.0.0; set it to "::" on IPv6-only networks.
 CMD ["sh", "-c", "exec uvicorn app.main:app --host \"$HOST\" --port \"$PORT\" --proxy-headers --forwarded-allow-ips='*'"]

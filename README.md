@@ -27,6 +27,8 @@ This gateway closes both gaps for a merchant, end to end:
 1. **Get found.** Audit every product against what agents need for its category, extract missing attributes from the product's own content with evidence, let the merchant review them, and write approved values back to Shopify as typed metafields. Publish the catalog as storefront JSON-LD, a streaming `llm.txt` feed and a UCP discovery profile.
 2. **Get bought.** Expose the catalog to approved agents through **three agent commerce protocols (ACP, UCP and MCP)** backed by one protocol-neutral cart engine with live stock and real shipping and tax. Hand the shopper to the merchant's **own Shopify checkout**, so the app never touches payment.
 
+<img width="1422" height="780" alt="Screenshot 2026-10-23 at 10 22 19 AM" src="https://github.com/user-attachments/assets/dbb656e4-6f96-4370-a786-861d61bc041e" />
+
 ## At a glance
 
 | | |

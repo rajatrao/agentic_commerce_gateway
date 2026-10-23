@@ -329,6 +329,27 @@ make prod-smoke  # build and run the production images locally
 | [docs/catalog-enrichment.md](docs/catalog-enrichment.md) | How missing product data is found, validated, reviewed and written back |
 | [docs/agentic-commerce.md](docs/agentic-commerce.md) | How AI agents shop the store through ACP, UCP and MCP |
 
+## Future work
+
+**Order management (Transaction layer)**
+- **Turn order linking on:** re-enable the `orders/create` webhook once Shopify grants protected customer data access. The code and tests are already in place.
+- **Order updates for agents:** use Shopify's fulfillment and order webhooks to send status and tracking updates through ACP and UCP, so an agent can answer "where's my order?".
+- **Cancellations, returns and refunds:** let agents request them, with the merchant approving each one in Shopify admin.
+- **Revenue by agent:** show orders, conversion and revenue for each agent on the Agent checkouts page.
+
+**Payments**
+- **Payments inside the agent:** once Shopify's App Store rules allow it, accept delegated payment tokens (ACP delegated payments, Shop Pay) so buyers can pay without leaving the agent.
+
+**Discoverability**
+- **Scheduled re-audits:** re-audit and re-enrich products automatically when the catalog drifts.
+- **More categories and markets:** add more category schemas, and support multiple languages and currencies through Shopify Markets.
+- **Live store testing:** test the taxonomy metafield writes and Storefront MCP search against live production stores.
+
+**Platform**
+- **Agent trust:** rate limits per agent key, and verification of signed agent requests (for example Web Bot Auth).
+- **Monitoring:** OpenTelemetry tracing, plus metrics for queue depth, job latency and retries.
+- **Other commerce platforms:** adapters for BigCommerce or WooCommerce that reuse the protocol and cart layers.
+
 ---
 
 <div align="center">
